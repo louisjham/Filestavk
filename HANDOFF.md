@@ -2,8 +2,8 @@
 
 **Last Updated**: September 14, 2026 (Local Time)  
 **Active Branch**: `main`  
-**Last Committed Milestone**: `8c9f29d` (*Milestone: Kimbel Brandon daily cephalopod affirmation engine, eyecite legal grounding, and Art. 39.14 Red Ink discovery gap auditor*)  
-**Prior Milestone**: `eca3f6e` (*Milestone: dual-pass cropped OCR, sidecar JSON metadata, and acceptance workflow integration*)
+**Last Committed Milestone**: `2753bee` (*Milestone: Resolve auth context module duplication, remove basicSsl protocol mismatch, and fix router prefixes*)  
+**Prior Milestone**: `8c9f29d` (*Milestone: Kimbel Brandon daily cephalopod affirmation engine, eyecite legal grounding, and Art. 39.14 Red Ink discovery gap auditor*)  
 
 ---
 
