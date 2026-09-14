@@ -23,6 +23,7 @@ import {
 import { OctopusIcon } from "@/components/icons/OctopusIcon"
 import { useAuth } from "@/lib/auth"
 import { KimbelDelegationCard } from "@/components/delegation/KimbelDelegationCard"
+import { KimbelDailyGreeting } from "@/components/KimbelDailyGreeting"
 import { formatDate } from "@/lib/utils"
 
 export function Dashboard() {
@@ -57,45 +58,34 @@ export function Dashboard() {
 
   return (
     <div className="space-y-6 max-w-7xl">
-      {/* 1. Serene Good Morning Header */}
-      <div className="bg-gradient-to-r from-slate-900 via-cyan-950/40 to-slate-900 border border-cyan-500/20 p-6 rounded-xl shadow-xs">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="space-y-1">
-            <div className="flex items-center gap-3">
-              <div className="h-10 w-10 rounded-full bg-cyan-950/80 border border-cyan-500/40 flex items-center justify-center shrink-0">
-                <OctopusIcon size={24} className="text-cyan-400" />
-              </div>
-              <div>
-                <h1 className="text-xl font-bold tracking-tight text-foreground">
-                  {isAssistant ? "Good morning, Assistant (asst)" : "Good morning, Kimbel"}
-                </h1>
-                <p className="text-xs text-cyan-300/80 font-medium">
-                  {briefing?.date_today || "Saturday, September 5, 2026"} &bull; {isAssistant ? "Hemocyanin Scoped Assistant Workspace" : "Hemocyanin Law Practice Command"}
-                </p>
-              </div>
-            </div>
-          </div>
+      {/* 1. Kimbel Brandon Daily Cephalopod Greeting & Command Header */}
+      <KimbelDailyGreeting />
 
-          <div className="flex items-center gap-2.5">
-            {!isAssistant && (
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => syncMutation.mutate()}
-                disabled={syncMutation.isPending}
-                className="text-xs gap-1.5 border-cyan-500/30 text-cyan-300 hover:bg-cyan-950/40"
-              >
-                <RefreshCw className={`h-3.5 w-3.5 ${syncMutation.isPending ? "animate-spin text-cyan-400" : ""}`} />
-                Sync Gmail (info@hemocyaninlaw.com)
-              </Button>
-            )}
-            <Button asChild size="sm" className="text-xs gap-1.5 bg-cyan-600 hover:bg-cyan-500 text-white font-medium">
-              <Link to="/ingestion/portal">
-                <Globe className="h-3.5 w-3.5" />
-                Nueces Portal Assist
-              </Link>
+      {/* Quick Action Toolbar */}
+      <div className="flex items-center justify-between gap-3 px-1 -mt-2">
+        <p className="text-xs text-muted-foreground font-medium">
+          {briefing?.date_today || "Nueces County Defense Command"} &bull; {isAssistant ? "Assistant Workspace" : "Kimbel Brandon, State Bar #24079543"}
+        </p>
+
+        <div className="flex items-center gap-2.5">
+          {!isAssistant && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => syncMutation.mutate()}
+              disabled={syncMutation.isPending}
+              className="text-xs gap-1.5 border-cyan-500/30 text-cyan-300 hover:bg-cyan-950/40"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${syncMutation.isPending ? "animate-spin text-cyan-400" : ""}`} />
+              Sync Gmail (info@hemocyaninlaw.com)
             </Button>
-          </div>
+          )}
+          <Button asChild size="sm" className="text-xs gap-1.5 bg-cyan-600 hover:bg-cyan-500 text-white font-medium">
+            <Link to="/ingestion/portal">
+              <Globe className="h-3.5 w-3.5" />
+              Nueces Portal Assist
+            </Link>
+          </Button>
         </div>
       </div>
 

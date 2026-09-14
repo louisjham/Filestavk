@@ -82,3 +82,8 @@ Release-26.07.0-0.zip
 *~
 .DS_Store
 Thumbs.db
+
+# Scratch & Temporary Test Artifacts
+scratch_test_output/
+test_final_out/
+user_script_dump.txt

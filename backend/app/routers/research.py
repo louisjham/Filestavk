@@ -285,18 +285,41 @@ async def get_texas_statutes(
     query: Optional[str] = None,
     current_user: dict = Depends(get_current_user),
 ):
-    """Searches Texas Criminal Statutes corpus (Morton Act, Bail, Penal Code, Drug Schedules)."""
+    """Searches Texas Criminal Statutes corpus using offline FTS5 SQLite database."""
+    from app.services.texas_statutes_service import texas_statutes_service
     if not query:
-        return {"statutes": TEXAS_STATUTES_CORPUS, "total": len(TEXAS_STATUTES_CORPUS)}
+        statutes = texas_statutes_service.get_all_statutes()
+    else:
+        statutes = texas_statutes_service.search_statutes(query)
 
-    q = query.lower()
-    matches = []
-    for stat in TEXAS_STATUTES_CORPUS:
-        haystack = f"{stat['code']} {stat['title']} {stat['category']} {stat['summary']} {' '.join(stat['key_elements'])}".lower()
-        if q in haystack:
-            matches.append(stat)
+    # Format key_elements for frontend backwards compatibility
+    formatted = []
+    for s in statutes:
+        formatted.append({
+            "code": s["code"],
+            "title": s["title"],
+            "category": s["category"],
+            "degree": s["degree"],
+            "summary": s["summary"],
+            "key_elements": s["elements"],
+            "penalty_range": s["penalty_range"],
+            "full_text": s["full_text"],
+            "affirmative_defenses": s["affirmative_defenses"],
+        })
 
-    return {"statutes": matches, "query": query, "total": len(matches)}
+    return {"statutes": formatted, "query": query, "total": len(formatted), "source": "Offline SQLite FTS5 (texas_codes.db)"}
+
+
+@router.post("/extract-citations")
+async def extract_citations_endpoint(
+    payload: dict,
+    current_user: dict = Depends(get_current_user),
+):
+    """Deterministic legal citation parser powered by eyecite & Texas statutory patterns."""
+    from app.services.citation_service import citation_service
+    text = payload.get("text", "")
+    citations = citation_service.extract_citations(text)
+    return {"count": len(citations), "citations": citations}
 
 
 @router.get("/courtlistener")

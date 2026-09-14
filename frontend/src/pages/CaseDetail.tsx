@@ -25,6 +25,12 @@ import {
   Download,
   ExternalLink,
   Lock,
+  Sparkles,
+  Copy,
+  Check,
+  RefreshCw,
+  AlertOctagon,
+  Eye,
 } from "lucide-react"
 import { formatDate } from "@/lib/utils"
 import { ClassificationBadge } from "@/components/shared/ClassificationBadge"
@@ -94,6 +100,46 @@ export function CaseDetail() {
       queryClient.invalidateQueries({ queryKey: ["case", caseId] })
     },
   })
+
+  // Discovery Gap Audit Query
+  const { data: auditData, isLoading: auditLoading } = useQuery({
+    queryKey: ["case-discovery-audit", caseId],
+    queryFn: () => api.discovery.getAudit(caseId),
+    enabled: !isNaN(caseId),
+  })
+
+  // Run Automated Discovery Audit Mutation
+  const runAuditMutation = useMutation({
+    mutationFn: () => api.discovery.runAudit(caseId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["case-discovery-audit", caseId] })
+      queryClient.invalidateQueries({ queryKey: ["case", caseId] })
+    },
+  })
+
+  const [motionText, setMotionText] = useState<string | null>(null)
+  const [copiedMotion, setCopiedMotion] = useState(false)
+  const [isGeneratingMotion, setIsGeneratingMotion] = useState(false)
+
+  const handleGenerateMotion = async () => {
+    setIsGeneratingMotion(true)
+    try {
+      const text = await api.discovery.getMotionToCompel(caseId)
+      setMotionText(text)
+    } catch (err) {
+      console.error("Failed to generate motion to compel", err)
+    } finally {
+      setIsGeneratingMotion(false)
+    }
+  }
+
+  const handleCopyMotion = () => {
+    if (motionText) {
+      navigator.clipboard.writeText(motionText)
+      setCopiedMotion(true)
+      setTimeout(() => setCopiedMotion(false), 2500)
+    }
+  }
 
   if (isLoading) {
     return <div className="p-8 text-center text-muted-foreground">Loading case details...</div>
@@ -491,68 +537,273 @@ export function CaseDetail() {
         </div>
       )}
 
-      {/* Tab 2: Michael Morton Act Discovery Checklist (Texas Art. 39.14 CCP) */}
+      {/* Tab 2: Michael Morton Act Discovery Checklist & "Red Ink" Gap Auditor */}
       {activeTab === "morton" && (
-        <Card>
-          <CardHeader className="pb-3 border-b border-border">
-            <div className="flex items-center justify-between">
-              <div>
-                <CardTitle className="text-base flex items-center gap-2">
-                  <FileCheck className="h-5 w-5 text-primary" />
-                  Texas Michael Morton Act Discovery Checklist (Art. 39.14 CCP)
-                </CardTitle>
-                <CardDescription>
-                  Track mandatory state discovery disclosures from the Nueces County District Attorney.
-                </CardDescription>
-              </div>
-              <Badge variant={mortonCompleteCount === totalMortonCount ? "success" : "info"}>
-                {mortonCompleteCount} of {totalMortonCount} items received
-              </Badge>
-            </div>
-          </CardHeader>
-
-          <CardContent className="p-6 space-y-3">
-            {[
-              { key: "offense_report", label: "Police Offense & Incident Reports", desc: "Arresting officer, narrative, supplementals (CCPD / Nueces Sheriff)" },
-              { key: "dashcam_video", label: "In-Car Dashcam Video Footage", desc: "Patrol car dashcam recording traffic stop / detention" },
-              { key: "bodycam_video", label: "Body-Worn Camera (BWC) Video", desc: "All on-scene officer body camera recordings" },
-              { key: "dps_lab_report", label: "DPS Forensic Lab Analysis", desc: "Narcotics analysis, Blood Alcohol concentration (BAC), or ballistics report" },
-              { key: "call_911_audio", label: "911 Dispatch & CAD Audio Recordings", desc: "Initial caller audio and dispatch logs" },
-              { key: "brady_notice", label: "Brady / Giglio Exculpatory Notice", desc: "State's notice of exculpatory or mitigating evidence" },
-              { key: "witness_statements", label: "Witness & Victim Statements", desc: "Written, recorded, or transcribed witness interviews" },
-            ].map((item) => {
-              const isChecked = mortonItems[item.key]
-              return (
-                <div
-                  key={item.key}
-                  onClick={() => toggleMortonItem(item.key)}
-                  className={`p-3.5 rounded-lg border cursor-pointer flex items-start gap-3 transition-all ${
-                    isChecked
-                      ? "bg-emerald-500/10 border-emerald-500/30 text-foreground"
-                      : "bg-card border-border hover:border-primary/40 text-muted-foreground"
-                  }`}
-                >
-                  <button className="mt-0.5 text-primary">
-                    {isChecked ? (
-                      <CheckSquare className="h-4 w-4 text-emerald-400" />
-                    ) : (
-                      <Square className="h-4 w-4 text-muted-foreground" />
-                    )}
-                  </button>
-                  <div className="space-y-0.5 flex-1">
-                    <div className={`text-xs font-semibold ${isChecked ? "text-emerald-300" : "text-foreground"}`}>
-                      {item.label}
-                    </div>
-                    <div className="text-[11px] text-muted-foreground">{item.desc}</div>
-                  </div>
-                  <Badge variant={isChecked ? "success" : "muted"} className="text-[10px] shrink-0">
-                    {isChecked ? "Received" : "Pending DA"}
-                  </Badge>
+        <div className="space-y-6">
+          {/* 1. Automated Discovery Gap Auditor Command Card */}
+          <Card className="border-border bg-gradient-to-r from-card via-card to-cyan-950/20">
+            <CardHeader className="pb-3 border-b border-border">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                <div>
+                  <CardTitle className="text-base flex items-center gap-2">
+                    <FileCheck className="h-5 w-5 text-cyan-400" />
+                    <span>Michael Morton Act Discovery Gap Auditor (Art. 39.14 CCP)</span>
+                  </CardTitle>
+                  <CardDescription>
+                    Automated scan of police narratives, CAD logs, and chain of custody records to identify missing discovery and constitutional suppression triggers.
+                  </CardDescription>
                 </div>
-              )
-            })}
-          </CardContent>
-        </Card>
+
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => runAuditMutation.mutate()}
+                    disabled={runAuditMutation.isPending}
+                    className="text-xs gap-1.5 border-cyan-500/30 text-cyan-300 hover:bg-cyan-950/40"
+                  >
+                    <RefreshCw className={`h-3.5 w-3.5 ${runAuditMutation.isPending ? "animate-spin text-cyan-400" : ""}`} />
+                    Run Gap Audit
+                  </Button>
+
+                  <Button
+                    size="sm"
+                    onClick={handleGenerateMotion}
+                    disabled={isGeneratingMotion}
+                    className="text-xs gap-1.5 bg-cyan-600 hover:bg-cyan-500 text-white font-medium shadow-xs"
+                  >
+                    <Sparkles className="h-3.5 w-3.5" />
+                    Draft Motion to Compel
+                  </Button>
+                </div>
+              </div>
+            </CardHeader>
+
+            <CardContent className="p-6">
+              {auditLoading ? (
+                <div className="text-center py-6 text-xs text-muted-foreground">Running evidentiary audit...</div>
+              ) : auditData ? (
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div className="p-3 rounded-lg bg-card border border-border">
+                    <div className="text-[11px] text-muted-foreground font-medium">Mentioned in Narratives</div>
+                    <div className="text-xl font-bold text-foreground mt-0.5">{auditData.summary?.total_items_mentioned ?? 0}</div>
+                  </div>
+                  <div className="p-3 rounded-lg bg-emerald-950/20 border border-emerald-500/30">
+                    <div className="text-[11px] text-emerald-300 font-medium">Verified in Discovery</div>
+                    <div className="text-xl font-bold text-emerald-400 mt-0.5">{auditData.summary?.produced_count ?? 0}</div>
+                  </div>
+                  <div className={`p-3 rounded-lg border ${
+                    (auditData.summary?.missing_count ?? 0) > 0
+                      ? "bg-red-950/30 border-red-500/50 text-red-300"
+                      : "bg-card border-border"
+                  }`}>
+                    <div className="text-[11px] font-medium">Missing Evidence Gaps</div>
+                    <div className="text-xl font-bold text-red-400 mt-0.5 flex items-center gap-1.5">
+                      {auditData.summary?.missing_count ?? 0}
+                      {(auditData.summary?.missing_count ?? 0) > 0 && (
+                        <span className="text-xs px-1.5 py-0.5 rounded-sm bg-red-500/20 text-red-300 border border-red-500/30">RED INK</span>
+                      )}
+                    </div>
+                  </div>
+                  <div className={`p-3 rounded-lg border ${
+                    (auditData.summary?.suppression_flags_count ?? 0) > 0
+                      ? "bg-amber-950/30 border-amber-500/50 text-amber-300"
+                      : "bg-card border-border"
+                  }`}>
+                    <div className="text-[11px] font-medium">Suppression Triggers</div>
+                    <div className="text-xl font-bold text-amber-400 mt-0.5">{auditData.summary?.suppression_flags_count ?? 0}</div>
+                  </div>
+                </div>
+              ) : (
+                <div className="text-center py-4 text-xs text-muted-foreground">Click "Run Gap Audit" to cross-reference police narratives against state productions.</div>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* 2. Motion to Compel Interactive Pleading Viewer */}
+          {motionText && (
+            <Card className="border-cyan-500/40 bg-slate-950 shadow-xl animate-fadeIn">
+              <CardHeader className="pb-3 border-b border-cyan-500/20 flex flex-row items-center justify-between">
+                <div>
+                  <CardTitle className="text-sm font-bold text-cyan-200 flex items-center gap-2">
+                    <FileText className="h-4 w-4 text-cyan-400" />
+                    Pleading Draft: Defendant's Notice of Discovery Deficit &amp; Motion to Compel (Art. 39.14 CCP)
+                  </CardTitle>
+                  <CardDescription className="text-xs">
+                    File-ready Texas pleading referencing Watkins v. State, 619 S.W.3d 265 and itemized deficits.
+                  </CardDescription>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={handleCopyMotion}
+                    className="text-xs gap-1.5 border-cyan-500/30 text-cyan-300 hover:bg-cyan-950/60"
+                  >
+                    {copiedMotion ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+                    {copiedMotion ? "Copied!" : "Copy Pleading"}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => setMotionText(null)}
+                    className="text-xs text-muted-foreground hover:text-white"
+                  >
+                    Close
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent className="p-4">
+                <pre className="p-4 rounded-lg bg-slate-900 border border-slate-800 text-cyan-100 font-mono text-xs leading-relaxed overflow-x-auto max-h-96 whitespace-pre-wrap">
+                  {motionText}
+                </pre>
+              </CardContent>
+            </Card>
+          )}
+
+          {/* 3. Red Ink Missing Evidence Deficits */}
+          {auditData?.missing_evidence && auditData.missing_evidence.length > 0 && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-red-400 flex items-center gap-1.5">
+                  <AlertOctagon className="h-4 w-4 text-red-500" />
+                  Red Ink Missing Evidence Deficits ({auditData.missing_evidence.length})
+                </h3>
+                <span className="text-[11px] text-muted-foreground">Disclosed in Narrative &bull; Missing from State Production</span>
+              </div>
+
+              <div className="space-y-2.5">
+                {auditData.missing_evidence.map((gap: any, idx: number) => (
+                  <div
+                    key={idx}
+                    className="p-4 rounded-xl border border-red-500/40 bg-red-950/20 shadow-xs flex flex-col sm:flex-row sm:items-start justify-between gap-3"
+                  >
+                    <div className="space-y-1.5 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm font-bold text-red-200">{gap.name}</span>
+                        <Badge variant="destructive" className="text-[10px] bg-red-500/20 text-red-300 border-red-500/40">
+                          {gap.category}
+                        </Badge>
+                        <span className="text-[10px] font-mono text-red-400/90">{gap.statutory_basis}</span>
+                      </div>
+                      <p className="text-xs text-slate-300 italic bg-slate-950/40 p-2.5 rounded-lg border border-red-500/10">
+                        {gap.snippet}
+                      </p>
+                    </div>
+
+                    <div className="shrink-0 self-end sm:self-center">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={handleGenerateMotion}
+                        className="text-xs border-red-500/40 text-red-300 hover:bg-red-950/50"
+                      >
+                        Compel in Motion
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 4. Constitutional & Statutory Suppression Triggers */}
+          {auditData?.suppression_flags && auditData.suppression_flags.length > 0 && (
+            <div className="space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-bold uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
+                  <Shield className="h-4 w-4 text-amber-500" />
+                  Constitutional &amp; Procedural Suppression Flags ({auditData.suppression_flags.length})
+                </h3>
+              </div>
+
+              <div className="space-y-2.5">
+                {auditData.suppression_flags.map((sup: any, idx: number) => (
+                  <div
+                    key={idx}
+                    className="p-4 rounded-xl border border-amber-500/40 bg-amber-950/20 shadow-xs space-y-2"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-sm font-bold text-amber-200">{sup.title}</span>
+                        <Badge variant="warning" className="text-[10px] bg-amber-500/20 text-amber-300 border-amber-500/40">
+                          {sup.basis}
+                        </Badge>
+                      </div>
+                      <span className="text-[10px] font-bold text-amber-400 uppercase tracking-wider">{sup.severity}</span>
+                    </div>
+                    <p className="text-xs text-slate-300">{sup.description}</p>
+                    <div className="text-[11px] text-amber-400/90 italic bg-slate-950/50 p-2 rounded border border-amber-500/15">
+                      Grounds: {sup.recommended_motion}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 5. Standard Morton Checklist */}
+          <Card>
+            <CardHeader className="pb-3 border-b border-border">
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="text-sm flex items-center gap-2 font-semibold">
+                    <FileCheck className="h-4 w-4 text-primary" />
+                    State Discovery Disclosures Checklist
+                  </CardTitle>
+                  <CardDescription className="text-xs">
+                    Manual receipt override and inspection confirmation.
+                  </CardDescription>
+                </div>
+                <Badge variant={mortonCompleteCount === totalMortonCount ? "success" : "info"}>
+                  {mortonCompleteCount} of {totalMortonCount} checked
+                </Badge>
+              </div>
+            </CardHeader>
+
+            <CardContent className="p-6 space-y-3">
+              {[
+                { key: "offense_report", label: "Police Offense & Incident Reports", desc: "Arresting officer, narrative, supplementals (CCPD / Nueces Sheriff)" },
+                { key: "dashcam_video", label: "In-Car Dashcam Video Footage", desc: "Patrol car dashcam recording traffic stop / detention" },
+                { key: "bodycam_video", label: "Body-Worn Camera (BWC) Video", desc: "All on-scene officer body camera recordings" },
+                { key: "dps_lab_report", label: "DPS Forensic Lab Analysis", desc: "Narcotics analysis, Blood Alcohol concentration (BAC), or ballistics report" },
+                { key: "call_911_audio", label: "911 Dispatch & CAD Audio Recordings", desc: "Initial caller audio and dispatch logs" },
+                { key: "brady_notice", label: "Brady / Giglio Exculpatory Notice", desc: "State's notice of exculpatory or mitigating evidence" },
+                { key: "witness_statements", label: "Witness & Victim Statements", desc: "Written, recorded, or transcribed witness interviews" },
+              ].map((item) => {
+                const isChecked = mortonItems[item.key]
+                return (
+                  <div
+                    key={item.key}
+                    onClick={() => toggleMortonItem(item.key)}
+                    className={`p-3.5 rounded-lg border cursor-pointer flex items-start gap-3 transition-all ${
+                      isChecked
+                        ? "bg-emerald-500/10 border-emerald-500/30 text-foreground"
+                        : "bg-card border-border hover:border-primary/40 text-muted-foreground"
+                    }`}
+                  >
+                    <button className="mt-0.5 text-primary">
+                      {isChecked ? (
+                        <CheckSquare className="h-4 w-4 text-emerald-400" />
+                      ) : (
+                        <Square className="h-4 w-4 text-muted-foreground" />
+                      )}
+                    </button>
+                    <div className="space-y-0.5 flex-1">
+                      <div className={`text-xs font-semibold ${isChecked ? "text-emerald-300" : "text-foreground"}`}>
+                        {item.label}
+                      </div>
+                      <div className="text-[11px] text-muted-foreground">{item.desc}</div>
+                    </div>
+                    <Badge variant={isChecked ? "success" : "muted"} className="text-[10px] shrink-0">
+                      {isChecked ? "Received" : "Pending DA"}
+                    </Badge>
+                  </div>
+                )
+              })}
+            </CardContent>
+          </Card>
+        </div>
       )}
 
       {/* Tab 3: Case Timeline (Docket History) */}

@@ -1,7 +1,7 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import auth, clients, cases, documents, ingestion, portal_assist, classify, search, analytics, vouchers, settings, spreadsheet, raw_parser, research, document_rules
+from app.routers import auth, clients, cases, documents, ingestion, portal_assist, classify, search, analytics, vouchers, settings, spreadsheet, raw_parser, research, document_rules, affirmations, discovery_audit
 from app.database import engine, Base
 from app.db_migration import sync_migrate_sqlite_schema
 import app.models  # ensure models are registered with Base
@@ -38,5 +38,7 @@ app.include_router(search.router, prefix="/search", tags=["search"])
 app.include_router(analytics.router, prefix="/analytics", tags=["analytics"])
 app.include_router(vouchers.router, prefix="/vouchers", tags=["vouchers"])
 app.include_router(settings.router, prefix="/settings", tags=["settings"])
+app.include_router(affirmations.router, prefix="/affirmations", tags=["affirmations"])
+app.include_router(discovery_audit.router, prefix="/api", tags=["discovery_audit"])
 
 
