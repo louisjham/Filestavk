@@ -59,7 +59,15 @@ async def main():
                 cl_obj = cl_res.scalars().first()
                 if cl_obj:
                     await db.delete(cl_obj)
-            await db.commit()
+
+        # Also clean up any lingering test client or doc for Oscar Perez or Oger Eee
+        lingering_cls = await db.execute(select(Client).where(Client.name.in_(["Oscar Perez", "Oger Eee"])))
+        for cl in lingering_cls.scalars().all():
+            lingering_docs = await db.execute(select(Document).where(Document.client_id == cl.id))
+            for ld in lingering_docs.scalars().all():
+                await db.delete(ld)
+            await db.delete(cl)
+        await db.commit()
 
         # Ingest document via upload_document
         print("\n--- Ingesting 'Acceptance of Appointment-26MC-02456.pdf' ---")

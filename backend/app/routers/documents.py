@@ -271,7 +271,7 @@ async def inspect_raw_document(
             f.write(file_bytes)
 
         extracted = extract_content(temp_path, file.filename)
-        legal_meta = extract_legal_entities(extracted.get("text", ""), file.filename)
+        legal_meta = extract_legal_entities(extracted.get("text", ""), file.filename, focused_crop=extracted.get("focused_crop"))
         category = legal_meta.get("classification_label") or "uncategorized"
 
         # 1. Check if Client exists in DB
@@ -387,7 +387,7 @@ async def batch_inspect_documents(
                 buf.write(file_bytes)
 
             extracted = extract_content(temp_path, f.filename)
-            legal_meta = extract_legal_entities(extracted.get("text", ""), f.filename)
+            legal_meta = extract_legal_entities(extracted.get("text", ""), f.filename, focused_crop=extracted.get("focused_crop"))
             category = legal_meta.get("classification_label") or "uncategorized"
 
             # Check Client
@@ -499,7 +499,7 @@ async def upload_document(
         # Run CPU-heavy parsing off the async event loop to prevent blocking
         def _parse_document():
             result = extract_content(temp_extract_path, file.filename)
-            meta = extract_legal_entities(result.get("text", ""), file.filename)
+            meta = extract_legal_entities(result.get("text", ""), file.filename, focused_crop=result.get("focused_crop"))
             return result, meta
 
         extracted, legal_meta = await asyncio.to_thread(_parse_document)
@@ -511,6 +511,16 @@ async def upload_document(
         court_name = legal_meta.get("court") or "County Court at Law No. 3"
         judge_name = legal_meta.get("judge") or "Hon. Deeanne Galvan"
         specialized = legal_meta.get("specialized_fields", {})
+
+        # Build secondary phone string (Cell, Work, Home)
+        phone_extras = []
+        if specialized.get("cell_phone"):
+            phone_extras.append(f"Cell: {specialized['cell_phone']}")
+        if specialized.get("work_phone"):
+            phone_extras.append(f"Work: {specialized['work_phone']}")
+        if specialized.get("home_phone") and specialized.get("home_phone") != specialized.get("phone"):
+            phone_extras.append(f"Home: {specialized['home_phone']}")
+        extra_phone_str = " | ".join(phone_extras)
 
         # --- HIERARCHY LEVEL 1: CLIENT RESOLUTION & DE-DUPLICATION ---
         resolved_client_id = client_id
@@ -530,14 +540,22 @@ async def upload_document(
                     existing_client.email = specialized["email"]
                 if not existing_client.dob and specialized.get("dob"):
                     existing_client.dob = specialized["dob"]
+                if extra_phone_str:
+                    if not existing_client.notes:
+                        existing_client.notes = extra_phone_str
+                    elif extra_phone_str not in existing_client.notes:
+                        existing_client.notes += f" | {extra_phone_str}"
             elif auto_provision:
+                base_note = f"Client record created from '{file.filename}' (Court: {court_name}, Cause: {primary_case or 'N/A'})."
+                if extra_phone_str:
+                    base_note += f" [{extra_phone_str}]"
                 new_client = Client(
                     name=def_name.strip(),
                     dob=specialized.get("dob"),
                     address=specialized.get("address"),
                     phone=specialized.get("phone"),
                     email=specialized.get("email"),
-                    notes=f"Client record created from '{file.filename}' (Court: {court_name}, Cause: {primary_case or 'N/A'}).",
+                    notes=base_note,
                 )
                 db.add(new_client)
                 await db.flush()
@@ -695,13 +713,37 @@ async def upload_document(
         os.makedirs(case_dir, exist_ok=True)
 
         ext_with_dot = os.path.splitext(file.filename)[1] or ".pdf"
-        if detected_label == "appointment_acceptance" and primary_case:
+        if not primary_case:
+            safe_filename = f"NEEDS_REVIEW_{os.path.basename(file.filename)}"
+        elif detected_label == "appointment_acceptance":
             safe_filename = f"Order_Of_Acceptance-{primary_case}{ext_with_dot}"
+        elif detected_label == "appointment_order":
+            safe_filename = f"Order_Of_Appt-{primary_case}{ext_with_dot}"
         else:
             safe_filename = os.path.basename(file.filename)
 
         permanent_filepath = os.path.join(case_dir, safe_filename)
         shutil.copyfile(temp_extract_path, permanent_filepath)
+
+        # Write matching sidecar .json metadata record
+        sidecar_json_path = os.path.splitext(permanent_filepath)[0] + ".json"
+        try:
+            with open(sidecar_json_path, "w", encoding="utf-8") as sc_f:
+                json.dump({
+                    "source_filename": file.filename,
+                    "renamed_filename": safe_filename,
+                    "case_number": primary_case,
+                    "court": court_name,
+                    "judge": judge_name,
+                    "defendant_name": def_name,
+                    "classification_label": detected_label,
+                    "specialized_fields": specialized,
+                    "health_status": health.get("status"),
+                    "extraction_method": extracted.get("extraction_method"),
+                    "ingested_at": datetime.now(timezone.utc).isoformat(),
+                }, sc_f, indent=2, ensure_ascii=False)
+        except Exception:
+            pass
 
         metadata_payload = json.dumps({
             "health_status": health.get("status"),

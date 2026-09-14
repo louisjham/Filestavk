@@ -292,14 +292,260 @@ def extract_content(filepath: str, filename: str) -> Dict[str, Any]:
         }
 
 
+TESSERACT_CMD = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+POPPLER_PATH = r"C:\antigravity\Filestavk\Release-26.07.0-0\poppler-26.07.0\Library\bin"
+
+
+def normalize_dob(value: Optional[str]) -> Optional[str]:
+    """
+    Normalize and validate an OCR DOB.
+    Accepted formats: MM/DD/YYYY, MM-DD-YYYY, MM DD YYYY, MMDDYYYY.
+    Returns standard MM/DD/YYYY.
+    Rejects invalid calendar dates, future dates, and unrealistic age bounds (<10 or >120).
+    """
+    if not value:
+        return None
+    from datetime import datetime
+
+    match = re.search(r"\b(\d{1,2})\s*[/-]\s*(\d{1,2})\s*[/-]\s*(\d{4})\b", value)
+    if match:
+        month, day, year = match.groups()
+    else:
+        digits = re.sub(r"\D", "", value)
+        if len(digits) != 8:
+            return None
+        month = digits[0:2]
+        day = digits[2:4]
+        year = digits[4:8]
+
+    try:
+        parsed_date = datetime(year=int(year), month=int(month), day=int(day)).date()
+    except (ValueError, OverflowError):
+        return None
+
+    today = datetime.now().date()
+    age_years = (today - parsed_date).days / 365.2425
+    if parsed_date > today or age_years < 10 or age_years > 120:
+        return None
+
+    return parsed_date.strftime("%m/%d/%Y")
+
+
+def title_case_name(value: Optional[str]) -> Optional[str]:
+    """Convert an all-caps OCR name to clean title case, preserving hyphens and apostrophes."""
+    if not value:
+        return None
+    result = []
+    for word in value.split():
+        hyphen_parts = []
+        for hyphen_part in word.split("-"):
+            apostrophe_parts = hyphen_part.split("'")
+            apostrophe_parts = [part.capitalize() if part else part for part in apostrophe_parts]
+            hyphen_parts.append("'".join(apostrophe_parts))
+        result.append("-".join(hyphen_parts))
+    return " ".join(result)
+
+
+def normalize_phone_number(value: Optional[str]) -> Optional[str]:
+    """Strictly normalize U.S. phone numbers to (XXX) XXX-XXXX format."""
+    if not value:
+        return None
+    digits = re.sub(r"\D", "", value)
+    if len(digits) == 11 and digits.startswith("1"):
+        digits = digits[1:]
+    if len(digits) != 10:
+        return None
+    return f"({digits[:3]}) {digits[3:6]}-{digits[6:]}"
+
+
+def render_pdf_page_to_image(filepath: str, page_num: int = 0, dpi: int = 400):
+    """Render a single PDF page to a grayscale Pillow image (400 DPI default) via PyMuPDF or pdf2image."""
+    from PIL import Image
+    try:
+        import pymupdf as fitz
+    except ImportError:
+        try:
+            import fitz
+        except ImportError:
+            fitz = None
+
+    if fitz is not None:
+        try:
+            doc = fitz.open(filepath)
+            if doc.page_count > page_num:
+                page = doc.load_page(page_num)
+                scale = dpi / 72.0
+                pixmap = page.get_pixmap(matrix=fitz.Matrix(scale, scale), colorspace=fitz.csGRAY, alpha=False)
+                img = Image.frombytes("L", (pixmap.width, pixmap.height), pixmap.samples)
+                doc.close()
+                return img
+            doc.close()
+        except Exception as e:
+            logger.warning(f"pymupdf rendering failed for {filepath}: {e}")
+
+    try:
+        from pdf2image import convert_from_path
+        images = convert_from_path(
+            filepath, dpi=dpi, first_page=page_num + 1, last_page=page_num + 1,
+            poppler_path=POPPLER_PATH,
+        )
+        if images:
+            return images[0].convert("L")
+    except Exception as e:
+        logger.warning(f"pdf2image rendering failed for {filepath}: {e}")
+
+    return None
+
+
+def preprocess_ocr_image(image, threshold: int = 185):
+    """Full-page contrast enhancement and binarization for scanned court records."""
+    from PIL import ImageOps
+    img = image.convert("L")
+    img = ImageOps.autocontrast(img, cutoff=1)
+    return img.point(lambda pixel: 0 if pixel < threshold else 255)
+
+
+def crop_client_name_dob_region(image):
+    """Proportional bounding box for client name/DOB in Nueces County appointment/acceptance forms."""
+    w, h = image.size
+    left = int(w * 0.03)
+    top = int(h * 0.380)
+    right = int(w * 0.70)
+    bottom = int(h * 0.425)
+    return image.crop((left, top, right, bottom))
+
+
+def preprocess_small_crop_region(image):
+    """Aggressive preprocessing for small text regions: 3x Lanczos, median filter, threshold, and white border."""
+    from PIL import Image, ImageOps, ImageFilter
+    img = image.convert("L")
+    img = img.resize((img.width * 3, img.height * 3), Image.Resampling.LANCZOS)
+    img = ImageOps.autocontrast(img, cutoff=1)
+    img = img.filter(ImageFilter.MedianFilter(size=3))
+    threshold = 185
+    img = img.point(lambda p: 0 if p < threshold else 255)
+    return ImageOps.expand(img, border=30, fill="white")
+
+
+def ocr_focused_client_region(image) -> Tuple[str, str]:
+    """
+    Run dual-pass OCR on focused client name/DOB crop:
+    - Pass 1: normal text (--psm 7)
+    - Pass 2: digits and slashes only (--psm 7 -c tessedit_char_whitelist=0123456789/)
+    """
+    import pytesseract
+    pytesseract.pytesseract.tesseract_cmd = TESSERACT_CMD
+
+    crop = crop_client_name_dob_region(image)
+    proc_crop = preprocess_small_crop_region(crop)
+
+    normal_text = pytesseract.image_to_string(proc_crop, lang="eng", config="--oem 3 --psm 7").strip()
+    digits_text = pytesseract.image_to_string(proc_crop, lang="eng", config="--oem 3 --psm 7 -c tessedit_char_whitelist=0123456789/").strip()
+    return normal_text, digits_text
+
+
+def extract_name_and_dob_from_crop(normal_text: str, digits_text: str) -> Tuple[Optional[str], Optional[str]]:
+    """Extract client name and DOB from focused crop texts with sanity bounds."""
+    name = None
+    normal_dob = normalize_dob(normal_text)
+    digits_dob = normalize_dob(digits_text)
+    dob = digits_dob or normal_dob
+
+    name_match = re.search(r"^\s*(.+?)\s*,?\s*D[O0]\.?\s*B\.?\s*[:.]?", normal_text, flags=re.IGNORECASE)
+    if not name_match:
+        name_match = re.search(r"^\s*(.+?)\s*,?\s*\d{1,2}\s*[/-]\s*\d{1,2}\s*[/-]\s*\d{4}", normal_text, flags=re.IGNORECASE)
+
+    if name_match:
+        raw_name = name_match.group(1)
+        raw_name = re.sub(r"[^A-Za-z .,'’\-]", " ", raw_name)
+        raw_name = re.sub(r"\s+", " ", raw_name).strip(" -.,;:")
+        if 3 <= len(raw_name) <= 80 and not re.search(r"\d", raw_name):
+            upper = raw_name.upper()
+            if "DOB" not in upper and "APPOINT" not in upper and "ATTORNEY" not in upper and "COUNTY" not in upper:
+                name = title_case_name(raw_name)
+
+    return name, dob
+
+
+def _extract_focused_crop_from_pdf(filepath: str) -> Optional[Dict[str, Any]]:
+    """Extract and validate name/DOB from focused crop of PDF page 1."""
+    p1_img = render_pdf_page_to_image(filepath, page_num=0, dpi=400)
+    if not p1_img:
+        return None
+    normal_text, digits_text = ocr_focused_client_region(p1_img)
+    crop_name, crop_dob = extract_name_and_dob_from_crop(normal_text, digits_text)
+    return {
+        "crop_name": crop_name,
+        "crop_dob": crop_dob,
+        "normal_text": normal_text,
+        "digits_text": digits_text,
+    }
+
+
+def _run_pdf_ocr(filepath: str, page_count: int) -> str:
+    """Backward-compatible wrapper returning full page OCR text."""
+    text, _ = _run_pdf_ocr_with_crops(filepath, page_count)
+    return text
+
+
+def _run_pdf_ocr_with_crops(filepath: str, page_count: int) -> Tuple[str, Optional[Dict[str, Any]]]:
+    """Enhanced OCR engine for scanned PDFs: Poppler 200 DPI full pages + focused dual-pass crop."""
+    import pytesseract
+    pytesseract.pytesseract.tesseract_cmd = TESSERACT_CMD
+
+    ocr_parts = []
+    focused_crop_data = None
+    images = []
+
+    # Primary renderer: pdf2image via Poppler (high fidelity for court stamps and captions)
+    try:
+        from pdf2image import convert_from_path
+        images = convert_from_path(
+            filepath, dpi=200, first_page=1, last_page=min(page_count, 10),
+            poppler_path=POPPLER_PATH,
+        )
+    except Exception as e:
+        logger.warning(f"pdf2image primary rendering failed: {e}")
+
+    # Fallback renderer: PyMuPDF / fitz
+    if not images:
+        for p_idx in range(min(page_count, 10)):
+            p_img = render_pdf_page_to_image(filepath, page_num=p_idx, dpi=200)
+            if p_img:
+                images.append(p_img)
+
+    for img in images:
+        txt = pytesseract.image_to_string(img, lang="eng").strip()
+        if txt:
+            ocr_parts.append(txt)
+
+    # Run focused sub-region crop on page 1
+    if images:
+        try:
+            p1_img = images[0]
+            normal_text, digits_text = ocr_focused_client_region(p1_img)
+            crop_name, crop_dob = extract_name_and_dob_from_crop(normal_text, digits_text)
+            focused_crop_data = {
+                "crop_name": crop_name,
+                "crop_dob": crop_dob,
+                "normal_text": normal_text,
+                "digits_text": digits_text,
+            }
+        except Exception as e:
+            logger.debug(f"Crop OCR failed on page 1: {e}")
+
+    return "\n\n".join(ocr_parts), focused_crop_data
+
+
 def _extract_pdf(filepath: str) -> Dict[str, Any]:
-    """Extract PDF text and tables via pdfplumber with scanned image OCR fallback."""
+    """Extract PDF text and tables via pdfplumber with 400 DPI OCR fallback and focused crops."""
     import pdfplumber
 
     text_parts = []
     tables = []
     page_count = 0
     is_scanned = False
+    focused_crop_data = None
 
     try:
         with pdfplumber.open(filepath) as pdf:
@@ -324,8 +570,8 @@ def _extract_pdf(filepath: str) -> Dict[str, Any]:
     # Detect if PDF is a scanned image (has pages but very low text yield)
     if page_count > 0 and len(full_text) < 40:
         is_scanned = True
-        logger.info(f"PDF {filepath} appears to be a scanned image layer. Attempting OCR fallback...")
-        ocr_text = _run_pdf_ocr(filepath, page_count)
+        logger.info(f"PDF {filepath} appears to be a scanned image layer. Attempting 400 DPI OCR fallback...")
+        ocr_text, focused_crop_data = _run_pdf_ocr_with_crops(filepath, page_count)
         if ocr_text.strip():
             full_text = ocr_text.strip()
             return {
@@ -335,7 +581,15 @@ def _extract_pdf(filepath: str) -> Dict[str, Any]:
                 "page_count": page_count,
                 "extraction_method": "ocr_tesseract",
                 "is_scanned_image": True,
+                "focused_crop": focused_crop_data,
             }
+
+    # If native text was extracted, check if it's an appointment or acceptance form where DOB crop verification adds accuracy
+    if page_count > 0 and any(k in full_text.lower() for k in ["appointment of attorney", "order of appointment", "to represent", "acceptance of appointment"]):
+        try:
+            focused_crop_data = _extract_focused_crop_from_pdf(filepath)
+        except Exception as e:
+            logger.debug(f"Focused crop check skipped: {e}")
 
     return {
         "text": full_text,
@@ -344,33 +598,8 @@ def _extract_pdf(filepath: str) -> Dict[str, Any]:
         "page_count": page_count,
         "extraction_method": "pdfplumber",
         "is_scanned_image": is_scanned,
+        "focused_crop": focused_crop_data,
     }
-
-
-def _run_pdf_ocr(filepath: str, page_count: int) -> str:
-    """Fallback OCR engine for scanned image PDFs."""
-    try:
-        import pytesseract
-        from pdf2image import convert_from_path
-
-        # Hardwired paths for this machine — avoids dependency on system PATH
-        TESSERACT_CMD = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
-        POPPLER_PATH = r"C:\antigravity\Filestavk\Release-26.07.0-0\poppler-26.07.0\Library\bin"
-        pytesseract.pytesseract.tesseract_cmd = TESSERACT_CMD
-
-        images = convert_from_path(
-            filepath, dpi=200, first_page=1, last_page=min(page_count, 10),
-            poppler_path=POPPLER_PATH,
-        )
-        ocr_parts = []
-        for img in images:
-            txt = pytesseract.image_to_string(img, lang="eng")
-            if txt.strip():
-                ocr_parts.append(txt.strip())
-        return "\n\n".join(ocr_parts)
-    except Exception as e:
-        logger.warning(f"OCR fallback failed: {e}")
-        return ""
 
 
 def _extract_docx(filepath: str) -> Dict[str, Any]:
@@ -528,14 +757,115 @@ def _extract_csv(filepath: str) -> Dict[str, Any]:
         return {"text": "", "tables": [], "sheets": [], "page_count": 0, "extraction_method": "none", "is_scanned_image": False}
 
 
+def extract_client_block(text: str) -> Dict[str, Any]:
+    """
+    Extract bounded client block information anchored after 'to represent:'
+    and ending before 'SIGNED ON THIS' / 'JUDGE PRESIDING' / 'ATTY PHONE' / 'ACCEPTANCE OF APPOINTMENT'.
+    Parses defendant_name, DOB, address, home_phone, work_phone, cell_phone, email, in_jail.
+    """
+    result = {
+        "defendant_name": None,
+        "date_of_birth": None,
+        "address": None,
+        "home_phone": None,
+        "work_phone": None,
+        "cell_phone": None,
+        "phone": None,
+        "email": None,
+        "in_jail": None,
+        "raw_block": None,
+    }
+
+    # Typo-tolerant anchor for "to represent:" (accepts :, ;, ., or space)
+    start_match = re.search(r"\bTO\s+REP[A-Za-z]{3,10}\s*[:;.]?\s*", text, flags=re.IGNORECASE)
+    if not start_match:
+        return result
+
+    after_anchor = text[start_match.end():]
+    end_match = re.search(
+        r"\bSIGNED\s+ON\s+THIS\b|\bJUDGE\s+PRESIDING\b|\bATTY\s+PHONE\b|\bACCEPTANCE\s+OF\s+APPOINTMENT\b",
+        after_anchor,
+        flags=re.IGNORECASE,
+    )
+    client_block = after_anchor[:end_match.start()] if end_match else after_anchor[:600]
+    result["raw_block"] = client_block.strip()
+
+    # 1. Defendant Name & DOB
+    name_dob_match = re.search(
+        r"(?im)^\s*(.+?)\s*,?\s*D[O0]\.?\s*B\.?\s*[:.]?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\b",
+        client_block,
+    )
+    if name_dob_match:
+        raw_name = name_dob_match.group(1)
+        raw_name = re.sub(r"[^A-Za-z .,'’\-]", " ", raw_name)
+        raw_name = re.sub(r"\s+", " ", raw_name).strip(" -.,;:")
+        if 3 <= len(raw_name) <= 80 and not re.search(r"\d", raw_name):
+            if "APPOINT" not in raw_name.upper() and "ATTORNEY" not in raw_name.upper() and "COUNTY" not in raw_name.upper():
+                result["defendant_name"] = title_case_name(raw_name)
+        result["date_of_birth"] = normalize_dob(name_dob_match.group(2))
+
+    # 2. Distinct Phone fields: HOME, WORK, CELL
+    home_m = re.search(r"\bHOME\s*:\s*([0-9().\-\s]{7,30}?)(?=,?\s*(?:WORK|CELL)\s*:|\n|$)", client_block, flags=re.IGNORECASE)
+    work_m = re.search(r"\bWORK\s*:\s*([0-9().\-\s]{7,30}?)(?=,?\s*(?:HOME|CELL)\s*:|\n|$)", client_block, flags=re.IGNORECASE)
+    cell_m = re.search(r"\bCELL\s*:\s*([0-9().\-\s]{7,30}?)(?=,?\s*(?:HOME|WORK)\s*:|\n|$)", client_block, flags=re.IGNORECASE)
+
+    if home_m:
+        result["home_phone"] = normalize_phone_number(home_m.group(1))
+    if work_m:
+        result["work_phone"] = normalize_phone_number(work_m.group(1))
+    if cell_m:
+        result["cell_phone"] = normalize_phone_number(cell_m.group(1))
+
+    # Preferred primary phone: Cell > Home > Work
+    result["phone"] = result["cell_phone"] or result["home_phone"] or result["work_phone"]
+
+    # 3. Email
+    email_m = re.search(r"\b([A-Za-z0-9._%+\-]+)\s*@\s*([A-Za-z0-9.\-]+\.[A-Za-z]{2,})\b", client_block)
+    if email_m:
+        cand_email = f"{email_m.group(1)}@{email_m.group(2)}".replace(" ", "").lower()
+        u_part, d_part = cand_email.split("@", 1)
+        clean_user = re.sub(r'^(?:\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}|\d{7,10})[-.\s]*', '', u_part)
+        if clean_user:
+            cand_email = f"{clean_user}@{d_part}"
+        ATTORNEY_DOMAINS = {"hemocyaninlaw.com", "hemocyaninlaw.org", "nuecesco.com", "nuecescountytx.gov"}
+        if d_part not in ATTORNEY_DOMAINS and cand_email not in ATTORNEY_DOMAINS:
+            if re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', cand_email):
+                result["email"] = cand_email
+
+    # 4. In Custody / Jail Status
+    jail_m = re.search(r"(?:currently\s+in\s+jail|in\s+jail|in\s+custody)\s*:\s*(yes|no)", client_block, flags=re.IGNORECASE)
+    if jail_m:
+        result["in_jail"] = jail_m.group(1).lower() == "yes"
+
+    # 5. Street Address & Texas ZIP
+    addr_lines = []
+    for line in client_block.splitlines():
+        line_clean = re.sub(r"\s+", " ", line).strip(" ,")
+        if not line_clean or "@" in line_clean:
+            continue
+        line_upper = line_clean.upper()
+        if any(k in line_upper for k in ["DOB", "HOME:", "WORK:", "CELL:", "IN JAIL", "SIGNED ON", "ATTY PHONE", "EMAIL"]):
+            continue
+        line_clean = re.sub(r'^\d{4}\s+(?=\d)', '', line_clean).strip()
+        looks_like_street = bool(re.match(r"^\d{1,6}\s+\S+", line_clean))
+        looks_like_tx = bool(re.search(r"\b(?:TX|TEXAS)\s+\d{5}(?:-\d{4})?\b", line_clean, flags=re.IGNORECASE))
+        if looks_like_street or looks_like_tx:
+            if "901 leopard" not in line_clean.lower() and "courthouse" not in line_clean.lower():
+                addr_lines.append(line_clean)
+    if addr_lines:
+        result["address"] = ", ".join(addr_lines)
+
+    return result
+
+
 # --- 3. Nueces County Legal Entity & Classification Engine ---
 
-def extract_legal_entities(text: str, filename: str) -> Dict[str, Any]:
+def extract_legal_entities(text: str, filename: str, focused_crop: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
     Extract deterministic legal metadata from extracted document text:
     - Nueces County Case / Cause Numbers (Felony CR, Misdemeanor MC/CC, Civil CV, DCR)
     - Presiding District Courts & County Courts at Law (exact disambiguation)
-    - Defendant / Client Names (Caption, 'NOW COMES', 'I, [Name], Defendant')
+    - Defendant / Client Names (Caption, 'NOW COMES', 'I, [Name], Defendant', or focused crop)
     - Document classification category (Waiver of Arraignment, Orders, Discovery, Warrants)
     - Purpose, plea, and procedural requests
     """
@@ -610,6 +940,7 @@ def extract_legal_entities(text: str, filename: str) -> Dict[str, Any]:
 
     # 3. Defendant / Client Name Extraction
     defendant_name = None
+
     # Pattern A: "NOW COMES Joseph Prude, Defendant"
     def_match_a = re.search(r'NOW\s+COMES\s+([A-Z][a-zA-Z\s,\.]+?),\s*(?:Defendant|the\s+Defendant)', combined, re.IGNORECASE)
     # Pattern B: "I, Joseph Prude, Defendant"
@@ -627,11 +958,15 @@ def extract_legal_entities(text: str, filename: str) -> Dict[str, Any]:
         if cand_match:
             candidate = cand_match.group(1).strip().rstrip(",.-§ \t\n")
             candidate = re.sub(r'\s+', ' ', candidate)
-            if 2 < len(candidate) < 50 and candidate.lower() not in ("the state of texas", "state of texas", "said court", "nueces county", "the undersigned"):
+            if 2 < len(candidate) < 50 and candidate.lower() not in ("the state of texas", "state of texas", "said court", "nueces county", "the undersigned", "defendant"):
                 if candidate.isupper():
                     candidate = candidate.title()
                 defendant_name = candidate
                 break
+
+    # Fallback to focused cropped region if full-text patterns were missed or degraded
+    if not defendant_name and focused_crop and focused_crop.get("crop_name"):
+        defendant_name = focused_crop["crop_name"]
 
     # 4. Document Classification & Specialized Legal Fields
     category = "uncategorized"
@@ -753,68 +1088,90 @@ def extract_legal_entities(text: str, filename: str) -> Dict[str, Any]:
         if sbn_m:
             specialized["attorney_sbn"] = sbn_m.group(1).strip()
 
-        # Client Attributes: DOB
-        dob_m = re.search(r'DOB\s*[:\-]?\s*([0-9]{1,2}/[0-9]{1,2}/[0-9]{4}|[0-9]{4}-[0-9]{2}-[0-9]{2})', combined, re.IGNORECASE)
-        if dob_m:
-            raw_dob = dob_m.group(1).strip()
-            try:
-                from dateutil import parser as _dateparser
-                parsed_dob = _dateparser.parse(raw_dob)
-                if 1920 <= parsed_dob.year <= 2026:
-                    specialized["dob"] = parsed_dob.strftime("%m/%d/%Y")
-                else:
-                    specialized["dob"] = raw_dob
-            except Exception:
-                specialized["dob"] = raw_dob
+        # Client Attributes: Parse client block anchored after "to represent:"
+        client_block = extract_client_block(combined)
 
-        # Address extraction: filter out courthouse / jail addresses (e.g. 901 Leopard St)
-        all_addrs = re.findall(r'(\d+\s+[A-Za-z0-9\s,\.\n]+?(?:TX|TEXAS)\s+\d{5})', combined, re.IGNORECASE)
-        client_addr = None
-        for cand_addr in all_addrs:
-            cand_clean = re.sub(r'\s+', ' ', cand_addr).strip()
-            # Strip leading 4-digit year OCR bleeds from the DOB line above (e.g. "1980 4741 ARCHER")
-            cand_clean = re.sub(r'^\d{4}\s+(?=\d)', '', cand_clean).strip()
-            if "901 leopard" not in cand_clean.lower() and "courthouse" not in cand_clean.lower():
-                client_addr = cand_clean
-                break
-        if client_addr:
-            specialized["address"] = client_addr
-
-        # Phone extraction: prioritize Home / Defendant phone, avoid Atty Phone
-        raw_phone = None
-        home_phone_m = re.search(r'(?:Home|Cell|Mobile|Defendant\s*Phone)[:\s]*([0-9]{3}[\-\.\s]?[0-9]{3}[\-\.\s]?[0-9]{4})', combined, re.IGNORECASE)
-        if home_phone_m:
-            raw_phone = home_phone_m.group(1).strip()
+        # 1. Date of Birth (Priority: focused whitelist crop -> client block -> general regex)
+        extracted_dob = None
+        if focused_crop and focused_crop.get("crop_dob"):
+            extracted_dob = focused_crop["crop_dob"]
+        elif client_block.get("date_of_birth"):
+            extracted_dob = client_block["date_of_birth"]
         else:
-            phone_m = re.search(r'(?<!Atty\s)(?:Home|Phone|Tel|Cell|Contact)[:\s]*([0-9]{3}[\-\.\s]?[0-9]{3}[\-\.\s]?[0-9]{4})', combined, re.IGNORECASE)
-            if phone_m:
-                raw_phone = phone_m.group(1).strip()
+            dob_m = re.search(r'DOB\s*[:\-]?\s*([0-9]{1,2}/[0-9]{1,2}/[0-9]{4}|[0-9]{4}-[0-9]{2}-[0-9]{2})', combined, re.IGNORECASE)
+            if dob_m:
+                extracted_dob = normalize_dob(dob_m.group(1).strip())
+                if not extracted_dob:
+                    raw_dob = dob_m.group(1).strip()
+                    try:
+                        from dateutil import parser as _dateparser
+                        parsed_dob = _dateparser.parse(raw_dob)
+                        if 1920 <= parsed_dob.year <= 2026:
+                            extracted_dob = parsed_dob.strftime("%m/%d/%Y")
+                        else:
+                            extracted_dob = raw_dob
+                    except Exception:
+                        extracted_dob = raw_dob
+        if extracted_dob:
+            specialized["dob"] = extracted_dob
 
-        if raw_phone:
-            # Strictly normalize phone numbers to (XXX) XXX-XXXX
-            p_digits = re.sub(r'\D', '', raw_phone)
-            if len(p_digits) == 11 and p_digits.startswith('1'):
-                p_digits = p_digits[1:]
-            if len(p_digits) == 10:
-                specialized["phone"] = f"({p_digits[0:3]}) {p_digits[3:6]}-{p_digits[6:10]}"
+        # 2. Address extraction (client block or filtered street address)
+        if client_block.get("address"):
+            specialized["address"] = client_block["address"]
+        else:
+            all_addrs = re.findall(r'(\d+\s+[A-Za-z0-9\s,\.\n]+?(?:TX|TEXAS)\s+\d{5})', combined, re.IGNORECASE)
+            client_addr = None
+            for cand_addr in all_addrs:
+                cand_clean = re.sub(r'\s+', ' ', cand_addr).strip()
+                cand_clean = re.sub(r'^\d{4}\s+(?=\d)', '', cand_clean).strip()
+                if "901 leopard" not in cand_clean.lower() and "courthouse" not in cand_clean.lower():
+                    client_addr = cand_clean
+                    break
+            if client_addr:
+                specialized["address"] = client_addr
+
+        # 3. Phone extraction: store segregated home, work, cell phones
+        if client_block.get("home_phone"):
+            specialized["home_phone"] = client_block["home_phone"]
+        if client_block.get("work_phone"):
+            specialized["work_phone"] = client_block["work_phone"]
+        if client_block.get("cell_phone"):
+            specialized["cell_phone"] = client_block["cell_phone"]
+
+        primary_phone = client_block.get("phone")
+        if not primary_phone:
+            raw_phone = None
+            home_phone_m = re.search(r'(?:Home|Cell|Mobile|Defendant\s*Phone)[:\s]*([0-9]{3}[\-\.\s]?[0-9]{3}[\-\.\s]?[0-9]{4})', combined, re.IGNORECASE)
+            if home_phone_m:
+                raw_phone = home_phone_m.group(1).strip()
             else:
-                specialized["phone"] = raw_phone
+                phone_m = re.search(r'(?<!Atty\s)(?:Home|Phone|Tel|Cell|Contact)[:\s]*([0-9]{3}[\-\.\s]?[0-9]{3}[\-\.\s]?[0-9]{4})', combined, re.IGNORECASE)
+                if phone_m:
+                    raw_phone = phone_m.group(1).strip()
+            if raw_phone:
+                primary_phone = normalize_phone_number(raw_phone) or raw_phone
 
+        if primary_phone:
+            specialized["phone"] = primary_phone
+
+        # 4. SO Number & In Custody Status
         so_m = re.search(r'SO\s*(?:NO\.?|#)?\s*([0-9A-Z]+)', combined, re.IGNORECASE)
         if so_m:
             specialized["so_number"] = so_m.group(1).strip()
 
-        jail_m = re.search(r'(?:currently\s+in\s+Jail|in\s+Jail)[:\s]*(Yes|No)', combined, re.IGNORECASE)
-        if jail_m:
-            specialized["in_custody"] = jail_m.group(1).lower() == "yes"
+        if client_block.get("in_jail") is not None:
+            specialized["in_custody"] = client_block["in_jail"]
+        else:
+            jail_m = re.search(r'(?:currently\s+in\s+Jail|in\s+Jail|in\s+custody)[:\s]*(Yes|No)', combined, re.IGNORECASE)
+            if jail_m:
+                specialized["in_custody"] = jail_m.group(1).lower() == "yes"
 
-        # Dates & Clerk File Stamp
+        # 5. Dates & Clerk File Stamp
         signed_m = re.search(r'Signed\s+on\s+this\s+(?:the\s+)?([0-9]{1,2}(?:st|nd|rd|th)?\s+day\s+of\s+[A-Za-z]+(?:\s*,\s*\d{1,4})?)', combined, re.IGNORECASE)
         if signed_m:
             raw_signed = signed_m.group(1).strip()
             specialized["appointment_order_date"] = raw_signed
             specialized["signed_date"] = raw_signed
-            # Normalize to ISO date for direct model writes
             try:
                 from dateutil import parser as _dateparser
                 from datetime import datetime as _dt
@@ -830,32 +1187,31 @@ def extract_legal_entities(text: str, filename: str) -> Dict[str, Any]:
             except Exception:
                 specialized["appointment_order_date_iso"] = None
 
-        # Client email — line-by-line extraction, prevent newline/phone bleed, skip attorney domains
-        ATTORNEY_EMAILS = {"hemocyaninlaw.com", "hemocyaninlaw.org", "hemocyaninlaw@gmail.com", "nuecesco.com", "nuecescountytx.gov"}
-        found_email = None
-        for line in combined.splitlines():
-            line_str = line.strip()
-            if not line_str:
-                continue
-            # Normalize OCR spaced dots e.g. "RAIN. DANILE8@GMAIL.COM" -> "RAIN.DANILE8@GMAIL.COM"
-            line_norm = re.sub(r'([A-Za-z0-9])\.\s+([A-Za-z0-9])', r'\1.\2', line_str)
-            # Find candidate emails on this single line (strictly avoiding cross-line bleed)
-            for email_m in re.finditer(r'(?:[Ee]mail[^\S\r\n]*[:\-]?[^\S\r\n]*)?([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})', line_norm):
-                cand = email_m.group(1).strip().lower()
-                user_part, dom_part = cand.split('@', 1)
-                # Strip leading phone number if OCR merged it on the same line (e.g. "361-850-3935shaunj774")
-                clean_user = re.sub(r'^(?:\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}|\d{7,10})[-.\s]*', '', user_part)
-                if clean_user:
-                    cand = f"{clean_user}@{dom_part}"
-                if dom_part not in ATTORNEY_EMAILS and cand not in ATTORNEY_EMAILS:
-                    if re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', cand):
-                        found_email = cand
-                        break
+        # 6. Client email — client block preferred, fallback to line-by-line
+        if client_block.get("email"):
+            specialized["email"] = client_block["email"]
+        else:
+            ATTORNEY_EMAILS = {"hemocyaninlaw.com", "hemocyaninlaw.org", "hemocyaninlaw@gmail.com", "nuecesco.com", "nuecescountytx.gov"}
+            found_email = None
+            for line in combined.splitlines():
+                line_str = line.strip()
+                if not line_str:
+                    continue
+                line_norm = re.sub(r'([A-Za-z0-9])\.\s+([A-Za-z0-9])', r'\1.\2', line_str)
+                for email_m in re.finditer(r'(?:[Ee]mail[^\S\r\n]*[:\-]?[^\S\r\n]*)?([a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,})', line_norm):
+                    cand = email_m.group(1).strip().lower()
+                    user_part, dom_part = cand.split('@', 1)
+                    clean_user = re.sub(r'^(?:\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}|\d{7,10})[-.\s]*', '', user_part)
+                    if clean_user:
+                        cand = f"{clean_user}@{dom_part}"
+                    if dom_part not in ATTORNEY_EMAILS and cand not in ATTORNEY_EMAILS:
+                        if re.match(r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$', cand):
+                            found_email = cand
+                            break
+                if found_email:
+                    break
             if found_email:
-                break
-
-        if found_email:
-            specialized["email"] = found_email
+                specialized["email"] = found_email
 
         if has_acceptance:
             specialized["voucher_billing_qualified"] = True
