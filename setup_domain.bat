@@ -28,6 +28,6 @@ if %errorlevel% equ 0 (
 
 echo.
 echo You can now access Filestavk at:
-echo   https://filestavk.law:5173
+echo   http://filestavk.law:5173
 echo.
 pause

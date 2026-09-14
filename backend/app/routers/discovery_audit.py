@@ -10,7 +10,7 @@ from app.database import get_db
 from app.deps import get_current_user
 from app.services.discovery_audit_service import discovery_audit_service
 
-router = APIRouter(prefix="/cases", tags=["discovery_audit"])
+router = APIRouter()
 
 
 @router.post("/{case_id}/discovery-audit")

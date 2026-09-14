@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { useAuth } from "@/lib/auth.tsx"
+import { useAuth } from "@/lib/auth"
 import { useLocation, Link } from "react-router-dom"
 import { LogOut, Sparkles, User, Lock, ArrowLeftRight, Check } from "lucide-react"
 import { Button } from "@/components/ui/button"

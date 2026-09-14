@@ -39,6 +39,6 @@ app.include_router(analytics.router, prefix="/analytics", tags=["analytics"])
 app.include_router(vouchers.router, prefix="/vouchers", tags=["vouchers"])
 app.include_router(settings.router, prefix="/settings", tags=["settings"])
 app.include_router(affirmations.router, prefix="/affirmations", tags=["affirmations"])
-app.include_router(discovery_audit.router, prefix="/api", tags=["discovery_audit"])
+app.include_router(discovery_audit.router, prefix="/cases", tags=["discovery_audit"])
 
 

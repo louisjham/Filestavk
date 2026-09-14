@@ -31,9 +31,9 @@ start "Filestavk Frontend [Vite]" cmd /k "cd /d "%~dp0frontend" && npm run dev -
 echo.
 echo ===================================================
 echo   Filestavk is ready for your demo:
-echo   - Local HTTPS:     https://localhost:5173
-echo   - Local Network:   https://192.168.12.166:5173
-echo   - Custom Domain:   https://filestavk.law:5173
+echo   - Local Access:    http://localhost:5173
+echo   - Local Network:   http://192.168.12.166:5173
+echo   - Custom Domain:   http://filestavk.law:5173
 echo   - Backend API:     http://localhost:8000/docs
 echo   - Attorney Login:  admin / admin123
 echo   - Assistant Login: asst / asst123

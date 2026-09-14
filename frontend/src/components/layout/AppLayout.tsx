@@ -1,7 +1,7 @@
 import { Outlet, Navigate } from "react-router-dom"
 import { Sidebar } from "./Sidebar"
 import { Topbar } from "./Topbar"
-import { useAuth } from "@/lib/auth.tsx"
+import { useAuth } from "@/lib/auth"
 
 export function AppLayout() {
   const { token, isLoading } = useAuth()

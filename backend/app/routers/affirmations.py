@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends, Query
 from app.deps import get_current_user
 from app.services.affirmation_service import affirmation_service
 
-router = APIRouter(prefix="/affirmations", tags=["affirmations"])
+router = APIRouter()
 
 
 @router.get("/daily")

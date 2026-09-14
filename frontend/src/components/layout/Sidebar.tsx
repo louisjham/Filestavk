@@ -1,6 +1,6 @@
 import { Link, useLocation } from "react-router-dom"
 import { useQuery } from "@tanstack/react-query"
-import { useAuth } from "@/lib/auth.tsx"
+import { useAuth } from "@/lib/auth"
 import { api } from "@/lib/api"
 import {
   LayoutDashboard,
@@ -19,7 +19,7 @@ import {
   BookOpen,
 } from "lucide-react"
 import { OctopusIcon } from "@/components/icons/OctopusIcon"
-import { cn } from "@/lib/utils.ts"
+import { cn } from "@/lib/utils"
 
 const attorneyNavItems = [
   { to: "/",                 icon: LayoutDashboard, label: "Morning Briefing" },
