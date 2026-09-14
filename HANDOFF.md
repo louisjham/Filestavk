@@ -1,41 +1,43 @@
 # Filestavk — Active Development Handoff & Session State
 
-**Last Updated**: September 13, 2026 (Local Time)  
+**Last Updated**: September 14, 2026 (Local Time)  
 **Active Branch**: `main`  
-**Last Committed Milestone**: `4c12e6e` (*Milestone: Full legal document ingestion, rules engine, and Order of Acceptance workflow*)
+**Last Committed Milestone**: `8c9f29d` (*Milestone: Kimbel Brandon daily cephalopod affirmation engine, eyecite legal grounding, and Art. 39.14 Red Ink discovery gap auditor*)  
+**Prior Milestone**: `eca3f6e` (*Milestone: dual-pass cropped OCR, sidecar JSON metadata, and acceptance workflow integration*)
 
 ---
 
 ## 1. Executive Summary of Current State
 
-Filestavk has evolved from a basic CRUD case tracker into an automated legal intake and procedural intelligence pipeline tailored for solo criminal defense in Nueces County, Texas.
+Filestavk is a specialized, zero-hallucination case, discovery, and practice management system built for solo criminal defense attorney **Kimbel Brandon** (Nueces County, Corpus Christi, Texas; State Bar #24079543; "Hemocyanin Law").
 
 ### Key Milestones Completed:
-1. **Document Rules Engine (`backend/app/models/document_rule.py`)**:
-   - Seeded with grounded Nueces County procedural rules.
-   - Automatically maps ingested documents (`appointment_order`, `appointment_acceptance`, `waiver_of_arraignment`, `discovery`, `court_order`, `police_report`, `hearing_notice`, `warrant_remittance`) to case stages, voucher billing eligibility, docket events, and statutory deadlines (e.g. Art. 26.04(j)(1) 48-hour client contact clock).
-2. **Acceptance of Appointment Workflow**:
-   - Extraction of attorney affirmation dates and District Clerk file-stamp endorsements.
-   - Transitions case appointment status from `AWAITING_ACCEPTANCE` to `CONFIRMED_AND_ACCEPTED`.
-   - Prerequisite check for County Auditor CJA voucher billing qualification.
-3. **High-Accuracy Tightly-Cropped OCR & Multi-Tier Extraction**:
-   - Incorporated dual-pass image processing for degraded court scans.
-   - Dedicated focused crop on client identification block (`to represent:` anchor) with digits-and-slashes whitelist OCR for Date of Birth.
-   - Segregation of primary phone, secondary phones (Cell, Work, Home), client address (filtering courthouse address 901 Leopard), and client email (excluding defense attorney domains).
-   - Standardized renaming to `Order_Of_Appt-{case_number}.pdf`, `Order_Of_Acceptance-{case_number}.pdf`, and fallback `NEEDS_REVIEW_{filename}.pdf`, accompanied by sidecar `.json` metadata files.
+1. **Kimbel Brandon Daily Cephalopod Affirmation & Command Center**:
+   - `backend/app/services/affirmation_service.py` & `backend/app/routers/affirmations.py`: Hand-crafted corpus of 52 witty, resilient affirmations weaving cephalopod biology (3 hearts, blue hemocyanin blood, escaping jars, regrowing arms) and criminal defense grit (Rule 403 exclusions of toxic baggage, Art. 17.151 speedy release from doubt). Deterministic daily hash rotation + interactive shuffle.
+   - `frontend/src/components/KimbelDailyGreeting.tsx`: Ocean-cyan command header on Dashboard with animated `OctopusIcon`, greeting, category tags, quote, tentacle tips, and shuffle button.
+2. **Deterministic Legal Grounding & Offline Texas Statutory Corpus**:
+   - `backend/app/services/citation_service.py`: Eyecite-powered deterministic citation extraction for Texas (`S.W.2d`, `S.W.3d`) and Federal reporters (`U.S.`, `F.3d`) plus Texas Penal Code/CCP inverted pattern extraction, generating direct CourtListener search URLs.
+   - `backend/app/services/texas_statutes_service.py`: Self-initializing offline SQLite database (`backend/data/texas_codes.db`) with an `FTS5` virtual table. Seeded with full statutory text, elements, degrees, penalties, and affirmative defenses for CCP (Arts. 17.151, 26.04, 26.05, 27.18, 38.22, 38.23, 39.14), Penal Code (§ 22.01, 22.02, 38.04, 49.04, etc.), and Health & Safety Code (§ 481.115).
+   - Mounted in `backend/app/routers/research.py` at `GET /research/statutes` and `POST /research/extract-citations`.
+3. **The Michael Morton Act (Art. 39.14 CCP) "Red Ink" Discovery Gap Auditor**:
+   - `backend/app/services/discovery_audit_service.py` & `backend/app/routers/discovery_audit.py`: Deep scan of police incident narratives (CCPD / NCSO) for mentioned evidence (BWCs by officer/unit, dashcams, CAD logs, 911 calls, DPS Crime Lab submissions, witness statements).
+   - Segregates narrative files from production files; flags missing items in red ink.
+   - Detects procedural suppression triggers: Art. 38.22 unrecorded custodial statements, Art. 38.23 warrantless searches, and Art. 17.151 90-day custody clocks.
+   - Generates file-ready formal Texas Motion to Compel Discovery quoting *Watkins v. State*, 619 S.W.3d 265.
+   - `frontend/src/pages/CaseDetail.tsx`: Integrated interactive Discovery Gap Auditor tab with red-ink deficit badges, suppression alerts, and one-click copyable Motion to Compel.
+4. **Document Rules Engine & Acceptance Workflow**:
+   - High-accuracy dual-pass OCR with focused crop on client block.
+   - Automatic case stage, docket event, and voucher status transitions upon clerk-stamped acceptance.
 
 ---
 
 ## 2. Active Uncommitted Changes (Working Tree)
 
-The working tree currently contains enhancements to document inspection, client deduplication, and metadata generation:
+Working tree is clean.
 
 | File | Status | Description of Changes |
 | :--- | :--- | :--- |
-| `backend/app/routers/documents.py` | `modified` | Pass `focused_crop` into `extract_legal_entities` across single and batch inspection endpoints; concatenate secondary phones into client notes without overwrite; write sidecar `.json` next to standardized document files. |
-| `backend/app/services/document_extractor_service.py` | `modified` | Dual-pass client block extraction; DOB parsing with dateutil fallback (1920–2026 bound); street address filtering (ignoring 901 Leopard / courthouse); phone normalizer; email OCR spaced dot repair and attorney domain exclusion. |
-| `intake_appointment_order.py` / `scripts/` | `untracked` | Standalone CLI script prototype implementing the dual-pass OCR pipeline. |
-| `test_final_out/`, `scratch_test_output/` | `untracked` | Temporary local OCR inspection artifacts. |
+| `HANDOFF.md` | `modified` | Updated to reflect milestone `8c9f29d`. |
 
 ---
 
@@ -43,41 +45,46 @@ The working tree currently contains enhancements to document inspection, client 
 
 ### Automated Extractor & Health Test
 ```powershell
-# From workspace root:
 $env:PYTHONPATH="backend"; .\backend\.venv\Scripts\python backend\test_document_extractor.py
 ```
 - **Status**: **PASSING (100%)**
-- Verifies: 0-byte stub rejection, corrupted header rejection, unsupported format rejection, DOCX text/table extraction, XLSX sheet/case extraction, CSV sniffing, appointment order phone/email normalization, and acceptance of appointment clerk file stamp detection.
 
 ### Acceptance Workflow Integration Test
 ```powershell
-# Run from backend directory (required for relative SQLite db path ./data/filestavk.db):
-cd backend
-.\.venv\Scripts\python test_acceptance_workflow.py
+cd backend; .\.venv\Scripts\python test_acceptance_workflow.py
 ```
-- **Status**: Requires updating test assertion for client name extraction following the new cropped OCR logic.
+- **Status**: **PASSING (100%)**
+
+### Michael Morton Act Discovery Audit Test
+```powershell
+cd backend; .\.venv\Scripts\python test_discovery_audit.py
+```
+- **Status**: **PASSING (100%)**
+
+### Frontend Production Build
+```powershell
+cd frontend; npm run build
+```
+- **Status**: **PASSING (100%, 0 errors)**
 
 ---
 
 ## 4. Immediate Next Objectives (Session Roadmap)
 
-1. **Michael Morton Act (Art. 39.14 CCP) "Red Ink" Discovery Triage Engine**:
-   - Build automated discovery gap detector that scans police offense reports (CCPD / NCSO) for mentioned evidence (Body-Worn Camera numbers, dashcam, CAD logs, DPS lab toxicology/ballistics, 911 calls, witness statements).
-   - Cross-check mentioned items against State's Discovery Compliance Log.
-   - Highlight missing items in red ink and generate pre-drafted Art. 39.14 Motion to Compel / Notice of Discovery Deficit.
-2. **Anti-Hallucination Grounding / Caselaw & Statutory Lookup**:
-   - Integrate `eyecite` for deterministic, zero-hallucination legal citation parsing.
-   - Build CourtListener API integration service for real-time opinion syllabus, holdings, and good-law verification.
-   - Seed offline SQLite database with Texas Penal Code and Texas Code of Criminal Procedure text for zero-latency statutory element matching.
-3. **Commit Working Tree Changes**:
-   - Stage and commit the validated `documents.py` and `document_extractor_service.py` modifications.
+1. **CourtListener API Live Client**:
+   - Add live citation validation against the Free Law Project / CourtListener REST API with caching in SQLite.
+2. **Automated Evidence Re-Auditing on File Ingestion**:
+   - Hook `discovery_audit_service.run_discovery_audit` into `documents.py` upload route so whenever the DA's office or portal produces new discovery PDFs/media, the gap list recalculates automatically.
+3. **Batch Export of Motions to Compel**:
+   - Generate styled `.docx` or PDF versions of the Motion to Compel with District/County clerk caption formatting ready for e-filing via eFileTexas.
 
 ---
 
 ## 5. Session Handoff Checklist for Agents
 
 When concluding your turn:
-- [ ] Run the test suite: `$env:PYTHONPATH="backend"; .\backend\.venv\Scripts\python backend\test_document_extractor.py`
-- [ ] Run `git status` to verify modified files.
-- [ ] Update this file (`HANDOFF.md`) with new milestones or changes.
-- [ ] Do not touch database migrations without creating an explicit Alembic revision.
+- [ ] Run the test suites (`test_document_extractor.py`, `test_acceptance_workflow.py`, `test_discovery_audit.py`).
+- [ ] Run `npm run build` in `frontend/`.
+- [ ] Run `git status` to verify clean working tree.
+- [ ] Update this file (`HANDOFF.md`) with new milestones.
+- [ ] Maintain the Zero-Hallucination Legal Integrity Directive and Kimbel's cephalopod persona.
