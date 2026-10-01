@@ -503,10 +503,12 @@ async def simulate_gmail_voucher_sync(
             v.amount_approved = v.amount_requested
             notice_subject = f"NOTICE OF ORDER APPROVING ATTORNEY FEES: {v.voucher_number}"
             v.notes = (v.notes or "") + f" | [Captured {now_str}] Judicial Approval signed."
+            from app.config import settings
+            inbox_email = "records@coastalpractice.example" if settings.demo_mode else "info@hemocyaninlaw.com"
             captured_notices.append({
                 "voucher_number": v.voucher_number,
                 "sender": "districtclerk.notifications@nuecesco.com",
-                "recipient": "info@hemocyaninlaw.com",
+                "recipient": inbox_email,
                 "subject": notice_subject,
                 "received_at": f"{now_str} {now_time_str}",
                 "status_transition": "SUBMITTED -> APPROVED",
@@ -524,28 +526,34 @@ async def simulate_gmail_voucher_sync(
             v.warrant_number = warr_num
             notice_subject = f"NUECES COUNTY TREASURER: DIRECT DEPOSIT REMITTANCE ({warr_num})"
             v.notes = (v.notes or "") + f" | [Captured {now_str}] Warrant {warr_num} disbursed."
+            from app.config import settings
+            inbox_email = "records@coastalpractice.example" if settings.demo_mode else "info@hemocyaninlaw.com"
+            vendor_str = "Vendor TX-NUE-10000 (Coastal Operations & Practice / Kimbel B.)" if settings.demo_mode else "Vendor TX-NUE-84920 (Hemocyanin Law / Kimbel Brandon)"
             captured_notices.append({
                 "voucher_number": v.voucher_number,
                 "sender": "auditor.disbursements@nuecesco.com",
-                "recipient": "info@hemocyaninlaw.com",
+                "recipient": inbox_email,
                 "subject": notice_subject,
                 "received_at": f"{now_str} {now_time_str}",
                 "status_transition": "APPROVED -> PAID",
                 "amount": f"${v.amount_paid:,.2f}",
-                "body_preview": f"Payment remittance advice for Vendor TX-NUE-84920 (Hemocyanin Law / Kimbel Brandon). Warrant {warr_num} in the amount of ${v.amount_paid:,.2f} has been posted via ACH direct deposit.",
+                "body_preview": f"Payment remittance advice for {vendor_str}. Warrant {warr_num} in the amount of ${v.amount_paid:,.2f} has been posted via ACH direct deposit.",
                 "is_immutable": True,
             })
             updated_count += 1
 
     await db.commit()
 
+    from app.config import settings
+    inbox_email = "records@coastalpractice.example" if settings.demo_mode else "info@hemocyaninlaw.com"
     return {
         "synced": True,
-        "target_inbox": "info@hemocyaninlaw.com",
+        "target_inbox": inbox_email,
         "captured_notices": captured_notices,
         "vouchers_updated": updated_count,
         "message": f"Successfully captured {len(captured_notices)} immutable voucher notices from business email. {updated_count} voucher(s) reconciled.",
     }
+
 
 
 @router.get("/{id}/export-paper")
@@ -595,17 +603,18 @@ async def export_paper_voucher(
         "warrant_number": vch.warrant_number,
         "notes": vch.notes,
         "attorney": {
-            "name": "Kimbel Brandon",
+            "name": "Kimbel B." if settings.demo_mode else "Kimbel Brandon",
             "title": "Attorney at Law",
-            "firm_name": "Hemocyanin Law",
-            "website": "https://www.hemocyaninlaw.com/",
-            "intake_email": "info@hemocyaninlaw.com",
-            "bar_number": "24098742",
-            "vendor_number": "TX-NUE-84920",
-            "address": "802 N. Carancahua St, Ste 1200, Corpus Christi, TX 78401",
-            "phone": "(361) 882-5299",
+            "firm_name": "Coastal Operations & Practice" if settings.demo_mode else "Hemocyanin Law",
+            "website": "https://www.coastalpractice.example" if settings.demo_mode else "https://www.hemocyaninlaw.com/",
+            "intake_email": "records@coastalpractice.example" if settings.demo_mode else "info@hemocyaninlaw.com",
+            "bar_number": "24000000" if settings.demo_mode else "24098742",
+            "vendor_number": "TX-NUE-10000" if settings.demo_mode else "TX-NUE-84920",
+            "address": "100 N. Shoreline Blvd, Suite 200, Corpus Christi, TX 78401" if settings.demo_mode else "802 N. Carancahua St, Ste 1200, Corpus Christi, TX 78401",
+            "phone": "(361) 555-0100" if settings.demo_mode else "(361) 882-5299",
         },
         "statutory_affirmation": "I hereby swear and affirm under penalty of perjury that the services rendered and expenses incurred are true and correct, and in accordance with Texas Code of Criminal Procedure Art. 26.05.",
         "exported_at": datetime.now(timezone.utc).isoformat(),
     }
+
 

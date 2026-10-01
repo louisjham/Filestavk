@@ -17,9 +17,12 @@ import {
   Scale,
   DollarSign,
 } from "lucide-react"
+import { usePracticeProfile } from "@/hooks/usePracticeProfile"
 
 export function KimbelDelegationCard() {
   const queryClient = useQueryClient()
+  const { isDemo } = usePracticeProfile()
+
 
   const { data: tasks, isLoading } = useQuery({
     queryKey: ["delegated-tasks"],
@@ -47,9 +50,10 @@ export function KimbelDelegationCard() {
               Kimbel's Delegation Board &bull; Assistant Work Queue
             </CardTitle>
             <CardDescription className="text-xs">
-              Direct tasks delegated by Kimbel Brandon from her morning briefing. Execute vouchers and dockets with 1 click.
+              Direct tasks delegated by {isDemo ? "Kimbel B." : "Kimbel Brandon"} from her morning briefing. Execute vouchers and dockets with 1 click.
             </CardDescription>
           </div>
+
           <Badge variant="outline" className="text-[10px] text-cyan-300 border-cyan-500/40 bg-cyan-950/40">
             {pendingTasks.length} Active Tasks
           </Badge>

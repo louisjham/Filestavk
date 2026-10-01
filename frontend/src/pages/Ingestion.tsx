@@ -19,9 +19,11 @@ import {
   Trash2,
   SlidersHorizontal,
 } from "lucide-react"
+import { usePracticeProfile } from "@/hooks/usePracticeProfile"
 
 export function Ingestion() {
   const queryClient = useQueryClient()
+  const { email, attorneyName, isDemo } = usePracticeProfile()
   const [activeTab, setActiveTab] = useState<"stream" | "verification" | "settings" | "database">("stream")
   const [selectedMsgIds, setSelectedMsgIds] = useState<string[]>([])
   const [selectedStagedId, setSelectedStagedId] = useState<number | null>(null)
@@ -29,11 +31,12 @@ export function Ingestion() {
 
   // Connection settings state
   const [configForm, setConfigForm] = useState({
-    email_address: "info@hemocyaninlaw.com",
+    email_address: email || "info@hemocyaninlaw.com",
     app_password: "",
     imap_host: "imap.gmail.com",
     imap_port: 993,
   })
+
   const [testResult, setTestResult] = useState<any>(null)
 
   // Side-by-side editing form state
@@ -320,9 +323,10 @@ export function Ingestion() {
             </div>
 
             <div className="text-xs text-slate-400">
-              Connected Account: <strong className="text-white">{configData?.email_address || "info@hemocyaninlaw.com"}</strong>
+              Connected Account: <strong className="text-white">{configData?.email_address || email}</strong>
             </div>
           </div>
+
 
           {loadingHeaders ? (
             <div className="p-12 text-center text-slate-400 bg-slate-900 border border-slate-800 rounded-xl">
@@ -496,9 +500,10 @@ export function Ingestion() {
                         <span className="text-xs text-slate-400 font-mono">ID #{item.id}</span>
                         {isCommitted ? (
                           <span className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-xs px-2 py-0.5 rounded font-semibold flex items-center gap-1">
-                            <CheckCircle2 className="w-3.5 h-3.5" /> Verified by {item.verified_by || "Kimbel Brandon"}
+                            <CheckCircle2 className="w-3.5 h-3.5" /> Verified by {item.verified_by || attorneyName}
                           </span>
                         ) : isRejected ? (
+
                           <span className="bg-rose-500/10 text-rose-400 border border-rose-500/20 text-xs px-2 py-0.5 rounded font-semibold flex items-center gap-1">
                             <XCircle className="w-3.5 h-3.5" /> Rejected
                           </span>

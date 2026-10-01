@@ -6,8 +6,10 @@ import { Badge } from "@/components/ui/badge"
 import { OctopusIcon } from "@/components/icons/OctopusIcon"
 import { Sparkles, RefreshCw, Heart, Shield, Globe, Compass } from "lucide-react"
 import { useAuth } from "@/lib/auth"
+import { usePracticeProfile } from "@/hooks/usePracticeProfile"
 
 interface AffirmationPayload {
+
   date: string
   greeting: string
   subtitle: string
@@ -23,7 +25,9 @@ interface AffirmationPayload {
 
 export function KimbelDailyGreeting() {
   const { user } = useAuth()
+  const { isDemo, firmName } = usePracticeProfile()
   const isAssistant = user?.role === "assistant"
+
 
   const { data: initialData, isLoading } = useQuery<AffirmationPayload>({
     queryKey: ["kimbel-daily-affirmation"],
@@ -94,8 +98,9 @@ export function KimbelDailyGreeting() {
 
             <p className="text-xs text-cyan-300/80 font-medium flex items-center gap-1.5">
               <Compass className="h-3 w-3 text-cyan-400" />
-              {isAssistant ? "Scoped Defense Assistant Command" : "Corpus Christi &bull; Nueces County Defense Command &bull; Hemocyanin Law"}
+              {isAssistant ? "Scoped Defense Assistant Command" : `Corpus Christi • Nueces County Defense Command • ${firmName}`}
             </p>
+
           </div>
         </div>
 

@@ -5,4 +5,5 @@ from .event import Event
 from .time_entry import TimeEntry, Voucher
 from .classification import ClassificationLabel, DocumentLabel, IngestionJob, SearchHistory, PortalAuditLog, RawEmailStaging
 from .document_rule import DocumentRule, DEFAULT_DOCUMENT_RULES
+from .extraction_sub_rule import ExtractionSubRule
 

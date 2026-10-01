@@ -19,6 +19,7 @@ from app.models.client import Client
 from app.models.event import Event
 from app.models.time_entry import Voucher
 from app.models.document_rule import DocumentRule, DEFAULT_DOCUMENT_RULES
+from app.models.extraction_sub_rule import ExtractionSubRule
 from app.schemas.document import DocumentOut
 from app.services.document_extractor_service import (
     validate_document_health,
@@ -112,6 +113,29 @@ async def apply_document_rule_to_ingestion(
                     if specialized.get("signed_date") or specialized.get("filed_date"):
                         case_obj.appointment_order_date = specialized.get("signed_date") or specialized.get("filed_date")
 
+                # Appellate Case Updates
+                if detected_label == "appellate_order_granting_extension":
+                    case_obj.stage = "APPEAL"
+                    if specialized.get("extended_due_date_iso"):
+                        case_obj.appellate_brief_due_date = specialized.get("extended_due_date_iso")
+                    case_obj.appellate_motion_status = "EXTENSION_GRANTED"
+                    case_obj.appellate_court = specialized.get("court") or court_name
+                    if specialized.get("appellate_case_number"):
+                        case_obj.appellate_case_number = specialized.get("appellate_case_number")
+                    if specialized.get("trial_court_case_number"):
+                        case_obj.trial_court_case_number = specialized.get("trial_court_case_number")
+                elif detected_label == "appellate_motion_extension":
+                    case_obj.stage = "APPEAL"
+                    case_obj.appellate_extension_count = specialized.get("extension_count", 1)
+                    if specialized.get("good_cause_statement"):
+                        case_obj.appellate_extension_reason = specialized.get("good_cause_statement")
+                    case_obj.appellate_motion_status = "MOTION_PENDING"
+                    case_obj.appellate_court = specialized.get("court") or court_name
+                    if not case_obj.appellate_brief_due_date and specialized.get("extended_due_date_iso"):
+                        case_obj.appellate_brief_due_date = specialized.get("extended_due_date_iso")
+                    if specialized.get("appellate_case_number"):
+                        case_obj.appellate_case_number = specialized.get("appellate_case_number")
+
                 if rule.auto_populate_case:
                     if specialized.get("charge_description") and (not case_obj.charge_description or case_obj.charge_description in ("Class A/B Misdemeanor", "Pending Offense")):
                         case_obj.charge_description = specialized.get("charge_description")
@@ -122,7 +146,7 @@ async def apply_document_rule_to_ingestion(
                     if "in_custody" in specialized:
                         case_obj.in_custody = specialized.get("in_custody")
 
-    # 3. Create Docket Timeline Events (Dual Events for Combined Scans)
+    # 3. Create Docket Timeline Events
     if resolved_case_id and rule and rule.create_docket_event:
         if detected_label == "appointment_acceptance" and specialized.get("has_order_section", True):
             # Event 1: Court Issued Appointment Order
@@ -148,6 +172,52 @@ async def apply_document_rule_to_ingestion(
                 event_date=filed_date_val,
             )
             db.add(evt_accept)
+        elif detected_label == "appellate_order_granting_extension":
+            # Event 1: Court Order Granting Extension
+            ext_due_str = specialized.get("extended_due_date") or specialized.get("extended_due_date_iso") or "Date pending"
+            ord_date = specialized.get("order_date_iso") or specialized.get("order_date") or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            evt_order = Event(
+                case_id=resolved_case_id,
+                event_type="order",
+                title=f"Extension of Time to File Brief GRANTED ({court_name})",
+                description=f"Court of Appeals GRANTED Appellant's motion for extension of time. Appellant's Brief officially extended to {ext_due_str}.",
+                event_date=ord_date,
+            )
+            db.add(evt_order)
+
+            # Event 2: Statutory/Calendar Deadline Event
+            evt_deadline = Event(
+                case_id=resolved_case_id,
+                event_type="deadline",
+                title="Court-Granted Appellant's Brief Due Date",
+                description=f"Appellant's Brief due in {court_name} on or before {ext_due_str}. Statutory basis: Tex. R. App. P. 38.6(d).",
+                event_date=specialized.get("extended_due_date_iso") or ord_date,
+            )
+            db.add(evt_deadline)
+        elif detected_label == "appellate_motion_extension":
+            # Event 1: Motion Pleading Filed
+            seq_str = specialized.get("motion_sequence", "First")
+            ext_due_str = specialized.get("extended_due_date") or specialized.get("extended_due_date_iso") or "30 days"
+            serv_date = specialized.get("service_date_iso") or specialized.get("certificate_of_service_date") or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            cause_desc = specialized.get("good_cause_summary") or specialized.get("good_cause_statement") or "Good cause on file."
+            evt_motion = Event(
+                case_id=resolved_case_id,
+                event_type="pleading",
+                title=f"{seq_str} Motion to Extend Time for Filing Appellant's Brief Filed",
+                description=f"Counsel filed {seq_str} Motion to Extend Time for Filing Appellant's Brief to {ext_due_str} in Cause No. {primary_case}. Good cause: {cause_desc}",
+                event_date=serv_date,
+            )
+            db.add(evt_motion)
+
+            # Event 2: Requested Deadline Reminder
+            evt_deadline = Event(
+                case_id=resolved_case_id,
+                event_type="deadline",
+                title=f"Requested Appellant's Brief Due Date ({seq_str} Extension)",
+                description=f"Counsel requested extension to {ext_due_str}. Good cause: {cause_desc}",
+                event_date=specialized.get("extended_due_date_iso") or serv_date,
+            )
+            db.add(evt_deadline)
         else:
             try:
                 title_fmt = rule.event_title_template.format(
@@ -159,6 +229,9 @@ async def apply_document_rule_to_ingestion(
                     charge=charge_desc,
                     attorney_name=atty_name,
                     sbn=sbn_num,
+                    motion_sequence=specialized.get("motion_sequence", "First"),
+                    extended_due_date=specialized.get("extended_due_date", "Extended Date"),
+                    good_cause_summary=specialized.get("good_cause_summary", "Good cause on file"),
                 )
             except Exception:
                 title_fmt = f"{rule.display_name} Filed ({court_name})"
@@ -176,6 +249,9 @@ async def apply_document_rule_to_ingestion(
                     amount_paid=specialized.get("amount_paid", "0.00"),
                     warrant_number=specialized.get("warrant_number", "N/A"),
                     hearing_datetime=specialized.get("hearing_datetime", "Scheduled Date"),
+                    motion_sequence=specialized.get("motion_sequence", "First"),
+                    extended_due_date=specialized.get("extended_due_date", "Extended Date"),
+                    good_cause_summary=specialized.get("good_cause_summary", "Good cause on file"),
                 )
             except Exception:
                 desc_fmt = f"{rule.display_name} processed for {def_name}."
@@ -189,16 +265,18 @@ async def apply_document_rule_to_ingestion(
             )
             db.add(evt)
 
-    # 4. Trigger Statutory Deadline Event if enabled (e.g. 48-Hour Contact Rule Art 26.04(j)(1))
+    # 4. Trigger Statutory Deadline Event if enabled (and not already handled as dual event)
     if resolved_case_id and rule and rule.trigger_statutory_deadline and rule.deadline_name:
-        deadline_evt = Event(
-            case_id=resolved_case_id,
-            event_type="deadline",
-            title=f"Statutory Deadline: {rule.deadline_name}",
-            description=f"Action Required under {rule.statutory_basis or 'Texas Law'}: Compliance due within {rule.deadline_hours_offset} hours for {def_name}.",
-            event_date=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
-        )
-        db.add(deadline_evt)
+        if detected_label not in ("appellate_order_granting_extension", "appellate_motion_extension"):
+            deadline_evt = Event(
+                case_id=resolved_case_id,
+                event_type="deadline",
+                title=f"Statutory Deadline: {rule.deadline_name}",
+                description=f"Action Required under {rule.statutory_basis or 'Texas Law'}: Compliance due within {rule.deadline_hours_offset} hours for {def_name}.",
+                event_date=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+            )
+            db.add(deadline_evt)
+
 
 
 
@@ -362,6 +440,22 @@ async def batch_inspect_documents(
     clients_to_create = 0
     cases_to_create = 0
 
+    # Fetch active extraction sub-rules
+    subrules_res = await db.execute(select(ExtractionSubRule).where(ExtractionSubRule.is_active == True))
+    active_sub_rules = subrules_res.scalars().all()
+    sub_rule_dicts = [
+        {
+            "id": r.id,
+            "document_type": r.document_type,
+            "field_name": r.field_name,
+            "rule_type": r.rule_type,
+            "pattern_or_value": r.pattern_or_value,
+            "capture_group": r.capture_group,
+            "is_active": r.is_active,
+        }
+        for r in active_sub_rules
+    ]
+
     for f in files:
         file_bytes = await f.read()
         health = validate_document_health(file_bytes, f.filename)
@@ -386,8 +480,19 @@ async def batch_inspect_documents(
             with open(temp_path, "wb") as buf:
                 buf.write(file_bytes)
 
-            extracted = extract_content(temp_path, f.filename)
-            legal_meta = extract_legal_entities(extracted.get("text", ""), f.filename, focused_crop=extracted.get("focused_crop"))
+            _b_fname = f.filename
+            _b_path = temp_path
+            def _parse_inspect():
+                res = extract_content(_b_path, _b_fname)
+                m = extract_legal_entities(
+                    res.get("text", ""),
+                    _b_fname,
+                    focused_crop=res.get("focused_crop"),
+                    sub_rules=sub_rule_dicts
+                )
+                return res, m
+
+            extracted, legal_meta = await asyncio.to_thread(_parse_inspect)
             category = legal_meta.get("classification_label") or "uncategorized"
 
             # Check Client
@@ -495,11 +600,32 @@ async def upload_document(
     with open(temp_extract_path, "wb") as buffer:
         buffer.write(file_bytes)
 
+    # Fetch active extraction sub-rules
+    subrules_res = await db.execute(select(ExtractionSubRule).where(ExtractionSubRule.is_active == True))
+    active_sub_rules = subrules_res.scalars().all()
+    sub_rule_dicts = [
+        {
+            "id": r.id,
+            "document_type": r.document_type,
+            "field_name": r.field_name,
+            "rule_type": r.rule_type,
+            "pattern_or_value": r.pattern_or_value,
+            "capture_group": r.capture_group,
+            "is_active": r.is_active,
+        }
+        for r in active_sub_rules
+    ]
+
     try:
         # Run CPU-heavy parsing off the async event loop to prevent blocking
         def _parse_document():
             result = extract_content(temp_extract_path, file.filename)
-            meta = extract_legal_entities(result.get("text", ""), file.filename, focused_crop=result.get("focused_crop"))
+            meta = extract_legal_entities(
+                result.get("text", ""),
+                file.filename,
+                focused_crop=result.get("focused_crop"),
+                sub_rules=sub_rule_dicts
+            )
             return result, meta
 
         extracted, legal_meta = await asyncio.to_thread(_parse_document)
@@ -573,16 +699,43 @@ async def upload_document(
         needs_human_review = bool(specialized.get("needs_human_review", False))
 
         if not resolved_case_id and primary_case:
-            case_search = await db.execute(
-                select(Case).where(Case.case_number == primary_case)
+            trial_case_ref = specialized.get("trial_court_case_number")
+            case_search_q = select(Case).where(
+                (Case.case_number == primary_case)
+                | (Case.appellate_case_number == primary_case)
+                | (Case.trial_court_case_number == primary_case)
             )
+            if trial_case_ref:
+                case_search_q = select(Case).where(
+                    (Case.case_number == primary_case)
+                    | (Case.appellate_case_number == primary_case)
+                    | (Case.trial_court_case_number == primary_case)
+                    | (Case.case_number == trial_case_ref)
+                    | (Case.trial_court_case_number == trial_case_ref)
+                )
+            case_search = await db.execute(case_search_q)
             existing_case = case_search.scalars().first()
             if existing_case:
                 resolved_case_id = existing_case.id
                 if not existing_case.client_id and resolved_client_id:
                     existing_case.client_id = resolved_client_id
 
-                if detected_label == "appointment_acceptance":
+                if "appellate" in detected_label:
+                    existing_case.stage = "APPEAL"
+                    if not existing_case.appellate_case_number and primary_case:
+                        existing_case.appellate_case_number = primary_case
+                    if trial_case_ref and not existing_case.trial_court_case_number:
+                        existing_case.trial_court_case_number = trial_case_ref
+                    if specialized.get("extended_due_date_iso"):
+                        existing_case.appellate_brief_due_date = specialized.get("extended_due_date_iso")
+                    if detected_label == "appellate_order_granting_extension":
+                        existing_case.appellate_motion_status = "EXTENSION_GRANTED"
+                    elif detected_label == "appellate_motion_extension":
+                        existing_case.appellate_motion_status = "MOTION_PENDING"
+                        existing_case.appellate_extension_count = specialized.get("extension_count", 1)
+                        if specialized.get("good_cause_statement"):
+                            existing_case.appellate_extension_reason = specialized.get("good_cause_statement")
+                elif detected_label == "appointment_acceptance":
                     if needs_human_review:
                         existing_case.appointment_status = "AWAITING_ACCEPTANCE_REVIEW"
                     else:
@@ -598,6 +751,7 @@ async def upload_document(
                     existing_case.appointment_status = "AWAITING_ACCEPTANCE"
             elif auto_provision:
                 is_felony = "district" in court_name.lower() or "felony" in detected_label.lower() or "felony" in (specialized.get("charge_description") or "").lower()
+                is_appellate = "appellate" in detected_label
 
                 if detected_label == "appointment_acceptance":
                     if needs_human_review:
@@ -616,6 +770,11 @@ async def upload_document(
                     has_accept = False
                     appt_status = "AWAITING_ACCEPTANCE"
                     vch_status = "NONE"
+                elif is_appellate:
+                    has_order = True
+                    has_accept = True
+                    appt_status = "CONFIRMED_AND_ACCEPTED"
+                    vch_status = "NONE"
                 else:
                     has_order = detected_label == "waiver_of_arraignment"
                     has_accept = False
@@ -625,12 +784,19 @@ async def upload_document(
                 new_case = Case(
                     client_id=resolved_client_id,
                     case_number=primary_case,
+                    appellate_case_number=primary_case if is_appellate else None,
+                    trial_court_case_number=specialized.get("trial_court_case_number"),
+                    appellate_court=specialized.get("court") if is_appellate else None,
+                    appellate_brief_due_date=specialized.get("extended_due_date_iso") if is_appellate else None,
+                    appellate_extension_count=specialized.get("extension_count", 1 if is_appellate and "motion" in detected_label else 0),
+                    appellate_extension_reason=specialized.get("good_cause_statement") if is_appellate else None,
+                    appellate_motion_status="EXTENSION_GRANTED" if detected_label == "appellate_order_granting_extension" else ("MOTION_PENDING" if is_appellate else None),
                     court=court_name,
                     judge=judge_name,
-                    charge_description=specialized.get("charge_description") or ("Class A/B Misdemeanor" if not is_felony else "Felony Offense"),
+                    charge_description=specialized.get("charge_description") or ("Appellate Review / Criminal Appeal" if is_appellate else ("Class A/B Misdemeanor" if not is_felony else "Felony Offense")),
                     is_cja=True,
                     status="open",
-                    stage="MAGISTRATE_HEARING" if "appointment" in detected_label else ("PRE_TRIAL" if detected_label == "waiver_of_arraignment" else "DISCOVERY"),
+                    stage="APPEAL" if is_appellate else ("MAGISTRATE_HEARING" if "appointment" in detected_label else ("PRE_TRIAL" if detected_label == "waiver_of_arraignment" else "DISCOVERY")),
                     has_appointment_order=has_order,
                     has_appointment_acceptance=has_accept,
                     appointment_order_date=appt_order_date if has_order else None,
@@ -708,7 +874,7 @@ async def upload_document(
                 )
                 db.add(case_vch)
 
-        # --- HIERARCHY LEVEL 3: PERSIST DOCUMENT & RENAME TO Order_Of_Acceptance-<CaseNumber> ---
+        # --- HIERARCHY LEVEL 3: PERSIST DOCUMENT & RENAME ---
         case_dir = os.path.join(UPLOAD_DIR, str(resolved_case_id or "unassigned"))
         os.makedirs(case_dir, exist_ok=True)
 
@@ -719,8 +885,14 @@ async def upload_document(
             safe_filename = f"Order_Of_Acceptance-{primary_case}{ext_with_dot}"
         elif detected_label == "appointment_order":
             safe_filename = f"Order_Of_Appt-{primary_case}{ext_with_dot}"
+        elif detected_label == "appellate_order_granting_extension":
+            safe_filename = f"Order_Granting_Brief_Extension-{primary_case}{ext_with_dot}"
+        elif detected_label == "appellate_motion_extension":
+            seq_fn = specialized.get("motion_sequence", "First")
+            safe_filename = f"Motion_To_Extend_Time_Brief-{primary_case}-{seq_fn}{ext_with_dot}"
         else:
             safe_filename = os.path.basename(file.filename)
+
 
         permanent_filepath = os.path.join(case_dir, safe_filename)
         shutil.copyfile(temp_extract_path, permanent_filepath)
@@ -816,6 +988,22 @@ async def batch_upload_documents(
     success_count = 0
     error_count = 0
 
+    # Fetch active extraction sub-rules
+    subrules_res = await db.execute(select(ExtractionSubRule).where(ExtractionSubRule.is_active == True))
+    active_sub_rules = subrules_res.scalars().all()
+    sub_rule_dicts = [
+        {
+            "id": r.id,
+            "document_type": r.document_type,
+            "field_name": r.field_name,
+            "rule_type": r.rule_type,
+            "pattern_or_value": r.pattern_or_value,
+            "capture_group": r.capture_group,
+            "is_active": r.is_active,
+        }
+        for r in active_sub_rules
+    ]
+
     for f in files:
         file_bytes = await f.read()
         health = validate_document_health(file_bytes, f.filename)
@@ -841,7 +1029,12 @@ async def batch_upload_documents(
             _path = temp_extract_path
             def _parse_batch_doc():
                 result = extract_content(_path, _fname)
-                meta = extract_legal_entities(result.get("text", ""), _fname)
+                meta = extract_legal_entities(
+                    result.get("text", ""),
+                    _fname,
+                    focused_crop=result.get("focused_crop"),
+                    sub_rules=sub_rule_dicts
+                )
                 return result, meta
 
             extracted, legal_meta = await asyncio.to_thread(_parse_batch_doc)
@@ -893,14 +1086,43 @@ async def batch_upload_documents(
             needs_human_review = bool(specialized.get("needs_human_review", False))
 
             if primary_case:
-                case_search = await db.execute(select(Case).where(Case.case_number == primary_case))
+                trial_case_ref = specialized.get("trial_court_case_number")
+                case_search_q = select(Case).where(
+                    (Case.case_number == primary_case)
+                    | (Case.appellate_case_number == primary_case)
+                    | (Case.trial_court_case_number == primary_case)
+                )
+                if trial_case_ref:
+                    case_search_q = select(Case).where(
+                        (Case.case_number == primary_case)
+                        | (Case.appellate_case_number == primary_case)
+                        | (Case.trial_court_case_number == primary_case)
+                        | (Case.case_number == trial_case_ref)
+                        | (Case.trial_court_case_number == trial_case_ref)
+                    )
+                case_search = await db.execute(case_search_q)
                 existing_case = case_search.scalars().first()
                 if existing_case:
                     resolved_case_id = existing_case.id
                     if not existing_case.client_id and resolved_client_id:
                         existing_case.client_id = resolved_client_id
 
-                    if detected_label == "appointment_acceptance":
+                    if "appellate" in detected_label:
+                        existing_case.stage = "APPEAL"
+                        if not existing_case.appellate_case_number and primary_case:
+                            existing_case.appellate_case_number = primary_case
+                        if trial_case_ref and not existing_case.trial_court_case_number:
+                            existing_case.trial_court_case_number = trial_case_ref
+                        if specialized.get("extended_due_date_iso"):
+                            existing_case.appellate_brief_due_date = specialized.get("extended_due_date_iso")
+                        if detected_label == "appellate_order_granting_extension":
+                            existing_case.appellate_motion_status = "EXTENSION_GRANTED"
+                        elif detected_label == "appellate_motion_extension":
+                            existing_case.appellate_motion_status = "MOTION_PENDING"
+                            existing_case.appellate_extension_count = specialized.get("extension_count", 1)
+                            if specialized.get("good_cause_statement"):
+                                existing_case.appellate_extension_reason = specialized.get("good_cause_statement")
+                    elif detected_label == "appointment_acceptance":
                         if needs_human_review:
                             existing_case.appointment_status = "AWAITING_ACCEPTANCE_REVIEW"
                         else:
@@ -916,6 +1138,7 @@ async def batch_upload_documents(
                         existing_case.appointment_status = "AWAITING_ACCEPTANCE"
                 elif auto_provision:
                     is_felony = "district" in court_name.lower() or "felony" in detected_label.lower() or "felony" in (specialized.get("charge_description") or "").lower()
+                    is_appellate = "appellate" in detected_label
 
                     if detected_label == "appointment_acceptance":
                         if needs_human_review:
@@ -934,6 +1157,11 @@ async def batch_upload_documents(
                         has_accept = False
                         appt_status = "AWAITING_ACCEPTANCE"
                         vch_status = "NONE"
+                    elif is_appellate:
+                        has_order = True
+                        has_accept = True
+                        appt_status = "CONFIRMED_AND_ACCEPTED"
+                        vch_status = "NONE"
                     else:
                         has_order = detected_label == "waiver_of_arraignment"
                         has_accept = False
@@ -943,18 +1171,25 @@ async def batch_upload_documents(
                     new_case = Case(
                         client_id=resolved_client_id,
                         case_number=primary_case,
+                        appellate_case_number=primary_case if is_appellate else None,
+                        trial_court_case_number=specialized.get("trial_court_case_number"),
+                        appellate_court=specialized.get("court") if is_appellate else None,
+                        appellate_brief_due_date=specialized.get("extended_due_date_iso") if is_appellate else None,
+                        appellate_extension_count=specialized.get("extension_count", 1 if is_appellate and "motion" in detected_label else 0),
+                        appellate_extension_reason=specialized.get("good_cause_statement") if is_appellate else None,
+                        appellate_motion_status="EXTENSION_GRANTED" if detected_label == "appellate_order_granting_extension" else ("MOTION_PENDING" if is_appellate else None),
                         court=court_name,
                         judge=judge_name,
-                        charge_description=specialized.get("charge_description") or ("Class A/B Misdemeanor" if not is_felony else "Felony Offense"),
+                        charge_description=specialized.get("charge_description") or ("Appellate Review / Criminal Appeal" if is_appellate else ("Class A/B Misdemeanor" if not is_felony else "Felony Offense")),
                         is_cja=True,
                         status="open",
-                        stage="MAGISTRATE_HEARING" if "appointment" in detected_label else ("PRE_TRIAL" if detected_label == "waiver_of_arraignment" else "DISCOVERY"),
+                        stage="APPEAL" if is_appellate else ("MAGISTRATE_HEARING" if "appointment" in detected_label else ("PRE_TRIAL" if detected_label == "waiver_of_arraignment" else "DISCOVERY")),
                         has_appointment_order=has_order,
                         has_appointment_acceptance=has_accept,
                         appointment_order_date=appt_order_date if has_order else None,
                         acceptance_filed_date=(specialized.get("acceptance_filed_date") or specialized.get("filed_date")) if has_accept else None,
                         client_contact_date=specialized.get("client_contact_date") or specialized.get("contact_acceptance_date"),
-                        appointment_status=appt_status,
+                        appointment_status="CONFIRMED_AND_ACCEPTED" if is_appellate else appt_status,
                         voucher_status=vch_status,
                         in_custody=specialized.get("in_custody", False),
                         notes=f"Case created automatically from batch document '{f.filename}'.",
@@ -1023,15 +1258,23 @@ async def batch_upload_documents(
                     )
                     db.add(case_vch)
 
-            # 3. Save Document & Rename to Order_Of_Acceptance-<CaseNumber>
+            # 3. Save Document & Rename
             case_dir = os.path.join(UPLOAD_DIR, str(resolved_case_id or "unassigned"))
             os.makedirs(case_dir, exist_ok=True)
 
             ext_with_dot = os.path.splitext(f.filename)[1] or ".pdf"
             if detected_label == "appointment_acceptance" and primary_case:
                 safe_filename = f"Order_Of_Acceptance-{primary_case}{ext_with_dot}"
+            elif detected_label == "appointment_order" and primary_case:
+                safe_filename = f"Order_Of_Appt-{primary_case}{ext_with_dot}"
+            elif detected_label == "appellate_order_granting_extension" and primary_case:
+                safe_filename = f"Order_Granting_Brief_Extension-{primary_case}{ext_with_dot}"
+            elif detected_label == "appellate_motion_extension" and primary_case:
+                seq_fn = specialized.get("motion_sequence", "First")
+                safe_filename = f"Motion_To_Extend_Time_Brief-{primary_case}-{seq_fn}{ext_with_dot}"
             else:
                 safe_filename = os.path.basename(f.filename)
+
 
             permanent_filepath = os.path.join(case_dir, safe_filename)
             shutil.copyfile(temp_extract_path, permanent_filepath)
@@ -1326,6 +1569,170 @@ async def approve_document_review(
         "case_id": doc.case_id,
         "message": "Document approved and downstream case & voucher workflow resumed successfully.",
     }
+
+
+class HumanCorrectionRequest(BaseModel):
+    corrections: Dict[str, Any]
+    learn_subrule: bool = False
+    subrule_field: Optional[str] = None
+    subrule_pattern: Optional[str] = None
+    subrule_type: str = "REGEX_PATTERN"  # REGEX_PATTERN, ANCHOR_EXTRACTION, CONSTANT_OVERRIDE
+    subrule_doc_type: Optional[str] = None
+    sample_text_snippet: Optional[str] = None
+    capture_group: int = 1
+
+
+@router.post("/{id}/human-correction")
+async def human_correction_document(
+    id: int,
+    req: HumanCorrectionRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Submit manual human-in-the-loop corrections for a document awaiting review.
+    Optionally persists a learned ExtractionSubRule to automate future parsing of this pattern,
+    and resumes/completes the parsing & document rule execution pipeline.
+    """
+    res = await db.execute(select(Document).where(Document.id == id))
+    doc = res.scalars().first()
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    meta = {}
+    if doc.metadata_json:
+        try:
+            meta = json.loads(doc.metadata_json)
+        except Exception:
+            meta = {}
+
+    legal_meta = meta.get("legal_metadata", {})
+    specialized = legal_meta.get("specialized_fields", {})
+
+    # 1. Learn & Save Sub-Rule if requested
+    created_subrule_id = None
+    if req.learn_subrule and req.subrule_field:
+        doc_type_val = req.subrule_doc_type or doc.classification_label or "all"
+        target_val = req.corrections.get(req.subrule_field) or req.subrule_pattern or "UNKNOWN"
+        pattern_or_val = req.subrule_pattern if req.subrule_type == "REGEX_PATTERN" else target_val
+        snippet = req.sample_text_snippet or (req.subrule_pattern if req.subrule_type in ("ANCHOR_VALUE", "ANCHOR_MATCH", "CONSTANT_OVERRIDE") else None)
+
+        new_subrule = ExtractionSubRule(
+            document_type=doc_type_val,
+            field_name=req.subrule_field,
+            rule_type=req.subrule_type,
+            pattern_or_value=pattern_or_val,
+            sample_text_snippet=snippet,
+            capture_group=req.capture_group,
+            is_active=True,
+            learned_from_doc_id=doc.id,
+            created_by=current_user.get("username") if isinstance(current_user, dict) else "attorney",
+        )
+        db.add(new_subrule)
+        await db.flush()
+        created_subrule_id = new_subrule.id
+
+    # 2. Apply corrections to document legal metadata
+    for k, v in req.corrections.items():
+        if k in legal_meta:
+            legal_meta[k] = v
+        specialized[k] = v
+        if k == "case_number" or k == "primary_case_number":
+            legal_meta["primary_case_number"] = v
+        elif k == "appellate_case_number":
+            legal_meta["appellate_case_number"] = v
+            specialized["appellate_case_number"] = v
+        elif k == "court":
+            legal_meta["court"] = v
+        elif k == "judge":
+            legal_meta["judge"] = v
+        elif k == "defendant_name":
+            legal_meta["defendant_name"] = v
+
+    legal_meta["specialized_fields"] = specialized
+    legal_meta["needs_human_review"] = False
+    legal_meta["missing_fields"] = []
+
+    meta["legal_metadata"] = legal_meta
+    meta["review_status"] = "APPROVED"
+    meta["missing_fields"] = []
+    meta["reviewed_by"] = current_user.get("username") if isinstance(current_user, dict) else "attorney"
+    meta["reviewed_at"] = datetime.now(timezone.utc).isoformat()
+    meta["human_corrections_applied"] = req.corrections
+    if created_subrule_id:
+        meta["learned_subrule_id"] = created_subrule_id
+
+    doc.metadata_json = json.dumps(meta)
+
+    # 3. Update or Provision Case & Client if necessary
+    target_case = None
+    if doc.case_id:
+        c_res = await db.execute(select(Case).where(Case.id == doc.case_id))
+        target_case = c_res.scalars().first()
+
+    if target_case:
+        if req.corrections.get("court"):
+            target_case.court = req.corrections["court"]
+        if req.corrections.get("judge"):
+            target_case.judge = req.corrections["judge"]
+        if req.corrections.get("case_number"):
+            target_case.case_number = req.corrections["case_number"]
+        if req.corrections.get("appellate_case_number"):
+            target_case.appellate_case_number = req.corrections["appellate_case_number"]
+        if req.corrections.get("trial_court_case_number"):
+            target_case.trial_court_case_number = req.corrections["trial_court_case_number"]
+        if req.corrections.get("extended_due_date_iso"):
+            target_case.appellate_brief_due_date = req.corrections["extended_due_date_iso"]
+        if req.corrections.get("good_cause_statement"):
+            target_case.appellate_extension_reason = req.corrections["good_cause_statement"]
+
+    # 4. Resume & Execute Document Rules
+    await apply_document_rule_to_ingestion(
+        db=db,
+        detected_label=doc.classification_label or "uncategorized",
+        legal_meta=legal_meta,
+        resolved_client_id=doc.client_id,
+        resolved_case_id=doc.case_id,
+        filename=doc.filename,
+    )
+
+    await db.commit()
+    await db.refresh(doc)
+
+    return {
+        "status": "APPROVED",
+        "document_id": doc.id,
+        "filename": doc.filename,
+        "case_id": doc.case_id,
+        "learned_subrule_id": created_subrule_id,
+        "message": "Human correction applied, sub-rule synthesized, and parsing pipeline finished successfully.",
+    }
+
+
+@router.get("/sub-rules")
+async def get_extraction_sub_rules(
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """List all user-taught extraction sub-rules."""
+    res = await db.execute(select(ExtractionSubRule).order_by(ExtractionSubRule.created_at.desc()))
+    return res.scalars().all()
+
+
+@router.delete("/sub-rules/{id}")
+async def delete_extraction_sub_rule(
+    id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """Delete a learned extraction sub-rule."""
+    res = await db.execute(select(ExtractionSubRule).where(ExtractionSubRule.id == id))
+    rule = res.scalars().first()
+    if not rule:
+        raise HTTPException(status_code=404, detail="Sub-rule not found")
+    await db.delete(rule)
+    await db.commit()
+    return {"status": "DELETED", "id": id}
 
 
 @router.post("/{id}/sign")

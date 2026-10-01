@@ -285,6 +285,65 @@ def _quick_extract_case_numbers(text: str) -> List[str]:
 
 def _get_sample_headers() -> List[Dict[str, Any]]:
     """Return grounded sample court and auditor headers for live verification & testing."""
+    from app.config import settings
+    if settings.demo_mode:
+        return [
+            {
+                "id": "sample-101",
+                "message_id": "<notice.court.2024101@txcourts.example>",
+                "subject": "HEARING NOTICE: Cause No. 2024-CR-00101-A (State v. Alex Morgan) - 105th District Court",
+                "from": "105th District Court Coordinator <coordinator@txcourts.example>",
+                "to": "Kimbel B. <records@coastalpractice.example>",
+                "date": "Mon, 08 Sep 2026 09:15:00 -0500",
+                "filter_tag": "NUECES_COURT_NOTICE",
+                "extracted_case_numbers": ["2024-CR-00101-A"],
+                "is_live": False,
+            },
+            {
+                "id": "sample-102",
+                "message_id": "<efile.notice.2024102@efiletexas.example>",
+                "subject": "E-Filing Acceptance: 2024-CR-00102-B Motion for Discovery (94th District Court)",
+                "from": "Courts E-Filing System <no-reply@efiletexas.example>",
+                "to": "Kimbel B. <records@coastalpractice.example>",
+                "date": "Sun, 07 Sep 2026 14:22:10 -0500",
+                "filter_tag": "ODYSSEY_EFILING",
+                "extracted_case_numbers": ["2024-CR-00102-B"],
+                "is_live": False,
+            },
+            {
+                "id": "sample-103",
+                "message_id": "<auditor.disbursements.904812@county.example>",
+                "subject": "County Auditor: Electronic Direct Deposit Disbursement Warrant #904812 ($2,100.00)",
+                "from": "County Auditor Disbursements <auditor.claims@county.example>",
+                "to": "Kimbel B. <records@coastalpractice.example>",
+                "date": "Fri, 05 Sep 2026 11:05:44 -0500",
+                "filter_tag": "COUNTY_AUDITOR_WARRANT",
+                "extracted_case_numbers": ["2024-CR-00103-C"],
+                "is_live": False,
+            },
+            {
+                "id": "sample-104",
+                "message_id": "<da.discovery.2024104@countyda.example>",
+                "subject": "Discovery Notice: Cause 2024-CR-00104-D (State v. Casey Rivera) - Supplemental Production",
+                "from": "DA Intake & Discovery <discovery@countyda.example>",
+                "to": "Kimbel B. <records@coastalpractice.example>",
+                "date": "Thu, 04 Sep 2026 16:40:18 -0500",
+                "filter_tag": "DA_DISCOVERY",
+                "extracted_case_numbers": ["2024-CR-00104-D"],
+                "is_live": False,
+            },
+            {
+                "id": "sample-105",
+                "message_id": "<court.order.2024105@county.example>",
+                "subject": "ORDER APPOINTING COUNSEL: Cause No. 2024-CR-00105-E (State v. Jordan Taylor) - 319th District Court",
+                "from": "Indigent Defense Coordinator <indigentdefense@county.example>",
+                "to": "Kimbel B. <records@coastalpractice.example>",
+                "date": "Wed, 03 Sep 2026 08:30:00 -0500",
+                "filter_tag": "APPOINTMENT_ORDER",
+                "extracted_case_numbers": ["2024-CR-00105-E"],
+                "is_live": False,
+            },
+        ]
     return [
         {
             "id": "sample-101",
@@ -342,6 +401,7 @@ def _get_sample_headers() -> List[Dict[str, Any]]:
             "is_live": False,
         },
     ]
+
 
 
 def _generate_sample_eml(sample_id: str) -> bytes:

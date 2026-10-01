@@ -20,8 +20,10 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid user")
     
     role = "assistant" if username == "asst" else "attorney"
+    attorney_name = "Kimbel B." if settings.demo_mode else "Kimbel Brandon, Esq."
     return {
         "username": username,
         "role": role,
-        "name": "Kimbel Brandon, Esq." if role == "attorney" else "Practice Assistant (asst)",
+        "name": attorney_name if role == "attorney" else "Practice Assistant (asst)",
     }
+

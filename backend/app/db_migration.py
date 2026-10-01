@@ -33,6 +33,13 @@ def sync_migrate_sqlite_schema(conn):
             ("acceptance_filed_date", "VARCHAR"),
             ("client_contact_date", "VARCHAR"),
             ("appointment_status", "VARCHAR DEFAULT 'UNKNOWN'"),
+            ("appellate_case_number", "VARCHAR"),
+            ("trial_court_case_number", "VARCHAR"),
+            ("appellate_court", "VARCHAR"),
+            ("appellate_brief_due_date", "VARCHAR"),
+            ("appellate_extension_count", "INTEGER DEFAULT 0"),
+            ("appellate_extension_reason", "TEXT"),
+            ("appellate_motion_status", "VARCHAR"),
             ("disposition_type", "VARCHAR"),
             ("disposition_date", "VARCHAR"),
             ("source_spreadsheet_row_id", "VARCHAR"),
@@ -108,7 +115,41 @@ def sync_migrate_sqlite_schema(conn):
             ("updated_at", "DATETIME"),
             ("created_at", "DATETIME"),
         ],
+        "extraction_sub_rules": [
+            ("document_type", "VARCHAR"),
+            ("field_name", "VARCHAR"),
+            ("rule_type", "VARCHAR DEFAULT 'REGEX_PATTERN'"),
+            ("pattern_or_value", "TEXT"),
+            ("sample_text_snippet", "TEXT"),
+            ("capture_group", "INTEGER DEFAULT 1"),
+            ("is_active", "BOOLEAN DEFAULT 1"),
+            ("learned_from_doc_id", "INTEGER"),
+            ("created_by", "VARCHAR DEFAULT 'attorney'"),
+            ("created_at", "DATETIME"),
+            ("updated_at", "DATETIME"),
+        ],
     }
+
+    # Ensure extraction_sub_rules table exists
+    try:
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS extraction_sub_rules (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                document_type VARCHAR NOT NULL,
+                field_name VARCHAR NOT NULL,
+                rule_type VARCHAR DEFAULT 'REGEX_PATTERN',
+                pattern_or_value TEXT NOT NULL,
+                sample_text_snippet TEXT,
+                capture_group INTEGER DEFAULT 1,
+                is_active BOOLEAN DEFAULT 1,
+                learned_from_doc_id INTEGER,
+                created_by VARCHAR DEFAULT 'attorney',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+    except Exception:
+        pass
 
     for table, cols in tables_columns.items():
         try:

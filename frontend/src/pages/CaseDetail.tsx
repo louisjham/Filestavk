@@ -31,6 +31,8 @@ import {
   RefreshCw,
   AlertOctagon,
   Eye,
+  Edit,
+  Trash2,
 } from "lucide-react"
 import { formatDate } from "@/lib/utils"
 import { ClassificationBadge } from "@/components/shared/ClassificationBadge"
@@ -52,6 +54,21 @@ export function CaseDetail() {
   const queryClient = useQueryClient()
   const [activeTab, setActiveTab] = useState<"overview" | "morton" | "timeline" | "documents" | "vouchers">("overview")
   const [autoBuildNotice, setAutoBuildNotice] = useState<string | null>(null)
+
+  // Edit Case Details State
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false)
+  const [editCaseForm, setEditCaseForm] = useState<any>({})
+
+  // Timeline Import & Manual Event State
+  const [isImportTimelineOpen, setIsImportTimelineOpen] = useState(false)
+  const [importTimelineText, setImportTimelineText] = useState("")
+  const [isAddEventOpen, setIsAddEventOpen] = useState(false)
+  const [newEventForm, setNewEventForm] = useState({
+    title: "",
+    event_type: "DOCKET_EVENT",
+    event_date: "",
+    description: "",
+  })
 
   // Fetch case data
   const { data: caseData, isLoading } = useQuery({
@@ -81,6 +98,39 @@ export function CaseDetail() {
     enabled: !isNaN(caseId),
   })
 
+  // Timeline Mutations
+  const importTimelineMutation = useMutation({
+    mutationFn: (raw_text: string) => api.cases.importPortalTimeline(caseId, raw_text),
+    onSuccess: (res: any) => {
+      queryClient.invalidateQueries({ queryKey: ["case-timeline", caseId] })
+      setIsImportTimelineOpen(false)
+      setImportTimelineText("")
+      alert(`Imported ${res.events_count || 0} events from Odyssey Portal summary!`)
+    },
+    onError: (err: any) => {
+      alert(`Timeline import failed: ${err.message || "Error parsing text"}`)
+    },
+  })
+
+  const addEventMutation = useMutation({
+    mutationFn: (data: any) => api.cases.addEvent(caseId, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["case-timeline", caseId] })
+      setIsAddEventOpen(false)
+      setNewEventForm({ title: "", event_type: "DOCKET_EVENT", event_date: "", description: "" })
+    },
+    onError: (err: any) => {
+      alert(`Failed to add event: ${err.message || "Unknown error"}`)
+    },
+  })
+
+  const deleteEventMutation = useMutation({
+    mutationFn: (eventId: number) => api.cases.deleteEvent(caseId, eventId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["case-timeline", caseId] })
+    },
+  })
+
   // 1-Click Auto Reconstruct Voucher Mutation
   const autoBuildMutation = useMutation({
     mutationFn: () => api.vouchers.autoGenerate(caseId),
@@ -98,8 +148,36 @@ export function CaseDetail() {
     mutationFn: (data: any) => api.cases.update(caseId, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["case", caseId] })
+      queryClient.invalidateQueries({ queryKey: ["dashboard-alerts"] })
+      setIsEditModalOpen(false)
     },
   })
+
+  const handleOpenEditCase = () => {
+    if (caseData) {
+      setEditCaseForm({
+        case_number: caseData.case_number || "",
+        court: caseData.court || "",
+        judge: caseData.judge || "",
+        charge_description: caseData.charge_description || "",
+        appellate_court: caseData.appellate_court || "",
+        appellate_case_number: caseData.appellate_case_number || "",
+        trial_court_case_number: caseData.trial_court_case_number || "",
+        appellate_brief_due_date: caseData.appellate_brief_due_date ? caseData.appellate_brief_due_date.slice(0, 10) : "",
+        stage: caseData.stage || "DISCOVERY",
+        status: caseData.status || "open",
+        is_cja: caseData.is_cja || false,
+        in_custody: caseData.in_custody || false,
+        jail_facility: caseData.jail_facility || "Nueces County Jail - Main",
+        notes: caseData.notes || "",
+      })
+      setIsEditModalOpen(true)
+    }
+  }
+
+  const handleSaveEditCase = () => {
+    updateCaseMutation.mutate(editCaseForm)
+  }
 
   // Discovery Gap Audit Query
   const { data: auditData, isLoading: auditLoading } = useQuery({
@@ -121,6 +199,10 @@ export function CaseDetail() {
   const [copiedMotion, setCopiedMotion] = useState(false)
   const [isGeneratingMotion, setIsGeneratingMotion] = useState(false)
 
+  const [appellateDraftText, setAppellateDraftText] = useState<string | null>(null)
+  const [copiedAppellateDraft, setCopiedAppellateDraft] = useState(false)
+  const [isGeneratingAppellateMotion, setIsGeneratingAppellateMotion] = useState(false)
+
   const handleGenerateMotion = async () => {
     setIsGeneratingMotion(true)
     try {
@@ -141,8 +223,29 @@ export function CaseDetail() {
     }
   }
 
+  const handleGenerateAppellateMotion = async () => {
+    setIsGeneratingAppellateMotion(true)
+    try {
+      const res = await api.cases.getAppellateExtensionDraft(caseId)
+      setAppellateDraftText(res.draft_pleading_text)
+    } catch (err) {
+      console.error("Failed to generate appellate motion draft", err)
+    } finally {
+      setIsGeneratingAppellateMotion(false)
+    }
+  }
+
+  const handleCopyAppellateDraft = () => {
+    if (appellateDraftText) {
+      navigator.clipboard.writeText(appellateDraftText)
+      setCopiedAppellateDraft(true)
+      setTimeout(() => setCopiedAppellateDraft(false), 2500)
+    }
+  }
+
   if (isLoading) {
     return <div className="p-8 text-center text-muted-foreground">Loading case details...</div>
+
   }
 
   if (!caseData) {
@@ -187,6 +290,17 @@ export function CaseDetail() {
   const totalMortonCount = Object.keys(mortonItems).length
   const isMidStride = Boolean(caseData.has_appointment_acceptance && !caseData.has_appointment_order)
 
+  let appellateDaysLeft: number | null = null
+  if (caseData.appellate_brief_due_date) {
+    try {
+      const due = new Date(caseData.appellate_brief_due_date.slice(0, 10))
+      const today = new Date()
+      today.setHours(0, 0, 0, 0)
+      appellateDaysLeft = Math.ceil((due.getTime() - today.getTime()) / (1000 * 60 * 60 * 24))
+    } catch {}
+  }
+  const isAppellateCase = Boolean(caseData.appellate_brief_due_date || caseData.stage === "APPEAL" || caseData.appellate_case_number)
+
   return (
     <div className="space-y-6 max-w-7xl">
       {/* Case Header Card */}
@@ -201,7 +315,12 @@ export function CaseDetail() {
                 <Badge variant={caseData.status === "OPEN" ? "info" : caseData.status === "DISPOSED" ? "warning" : "success"}>
                   {caseData.status}
                 </Badge>
-                {caseData.is_cja ? (
+                {isAppellateCase ? (
+                  <Badge variant="teal" className="bg-cyan-500/20 text-cyan-300 border-cyan-500/40 gap-1 flex items-center font-bold">
+                    <Scale className="h-3 w-3" />
+                    13th Court of Appeals
+                  </Badge>
+                ) : caseData.is_cja ? (
                   <Badge variant="purple">Appointed (CJA / Fair Defense Act)</Badge>
                 ) : (
                   <Badge variant="teal">Retained Counsel</Badge>
@@ -239,9 +358,18 @@ export function CaseDetail() {
               </div>
             </div>
 
-            {/* Top Right Action Button: 1-Click Voucher Builder */}
-            {caseData.is_cja && (
-              <div className="flex flex-col sm:flex-row items-end gap-2">
+            {/* Top Right Action Buttons */}
+            <div className="flex flex-col sm:flex-row items-end sm:items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleOpenEditCase}
+                className="text-xs gap-1.5 border-border hover:bg-muted"
+              >
+                <Edit className="h-3.5 w-3.5 text-primary" />
+                Edit Case Details
+              </Button>
+              {caseData.is_cja && !isAppellateCase && (
                 <Button
                   onClick={() => autoBuildMutation.mutate()}
                   disabled={autoBuildMutation.isPending}
@@ -250,11 +378,156 @@ export function CaseDetail() {
                   <DollarSign className="h-4 w-4" />
                   1-Click Auto-Build Voucher
                 </Button>
-              </div>
-            )}
+              )}
+            </div>
           </div>
         </CardContent>
       </Card>
+
+      {/* Texas 13th Court of Appeals Brief Extension & Due Date Card */}
+      {isAppellateCase && (
+        <Card className={`border ${
+          appellateDaysLeft !== null && appellateDaysLeft < 0
+            ? "bg-red-950/30 border-red-500/50 text-red-300"
+            : appellateDaysLeft !== null && appellateDaysLeft <= 7
+            ? "bg-amber-950/25 border-amber-500/50 text-amber-300"
+            : "bg-cyan-950/20 border-cyan-500/40 text-cyan-300"
+        }`}>
+          <CardContent className="p-4">
+            <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
+              <div className="space-y-2 flex-1">
+                <div className="flex items-center gap-2.5 flex-wrap">
+                  <Scale className="h-5 w-5 text-cyan-400 shrink-0" />
+                  <span className="text-foreground font-bold text-sm">
+                    13th Court of Appeals — Appellant's Brief Extension Tracker
+                  </span>
+                  {appellateDaysLeft !== null && appellateDaysLeft < 0 ? (
+                    <Badge variant="destructive" className="bg-red-600 text-white font-bold text-xs animate-pulse">
+                      OVERDUE BY {Math.abs(appellateDaysLeft)} DAYS (TRAP 38.8)
+                    </Badge>
+                  ) : appellateDaysLeft !== null && appellateDaysLeft <= 7 ? (
+                    <Badge variant="destructive" className="bg-amber-500/20 text-amber-300 border-amber-500/50 font-bold text-xs">
+                      ⚠️ {appellateDaysLeft} DAYS REMAINING (URGENT)
+                    </Badge>
+                  ) : (
+                    <Badge variant="teal" className="bg-cyan-500/20 text-cyan-300 border-cyan-500/40 font-semibold text-xs">
+                      ⏱️ {appellateDaysLeft ?? "—"} Days Remaining
+                    </Badge>
+                  )}
+                  <Badge variant="outline" className="text-[10px] uppercase font-mono">
+                    {caseData.appellate_motion_status === "EXTENSION_GRANTED" ? "Extension Granted" : "Motion Pending"}
+                  </Badge>
+                </div>
+
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  {caseData.appellate_motion_status === "EXTENSION_GRANTED"
+                    ? `The 13th Court of Appeals officially GRANTED Appellant's motion for extension of time under Tex. R. App. P. 38.6(d). The primary argumentative document must be e-filed on or before the calendar deadline.`
+                    : `Counsel filed a formal Motion to Extend Time for Filing Appellant's Brief under Tex. R. App. P. 10.5(b) & 38.6(d) requesting an enlarged 30-day deadline.`}
+                </p>
+
+                {/* Stated Good Cause & Docket Data Chips */}
+                <div className="flex flex-wrap items-center gap-3 text-xs pt-1">
+                  <div className="bg-card/60 px-2.5 py-1 rounded border border-border flex items-center gap-1.5">
+                    <span className="text-muted-foreground text-[11px]">Appellate Cause:</span>
+                    <strong className="text-foreground font-mono">{caseData.appellate_case_number || caseData.case_number}</strong>
+                  </div>
+
+                  {caseData.trial_court_case_number && (
+                    <div className="bg-card/60 px-2.5 py-1 rounded border border-border flex items-center gap-1.5">
+                      <span className="text-muted-foreground text-[11px]">Trial Court Cause:</span>
+                      <strong className="text-foreground font-mono">{caseData.trial_court_case_number}</strong>
+                    </div>
+                  )}
+
+                  <div className="bg-card/60 px-2.5 py-1 rounded border border-border flex items-center gap-1.5">
+                    <span className="text-muted-foreground text-[11px]">Brief Due Date:</span>
+                    <strong className="text-foreground font-mono">
+                      {caseData.appellate_brief_due_date ? formatDate(caseData.appellate_brief_due_date) : "Pending Schedule"}
+                    </strong>
+                  </div>
+
+                  <div className="bg-card/60 px-2.5 py-1 rounded border border-border flex items-center gap-1.5">
+                    <span className="text-muted-foreground text-[11px]">Extension Count:</span>
+                    <strong className="text-foreground font-mono">
+                      {caseData.appellate_extension_count ? `${caseData.appellate_extension_count} Granted/Filed` : "1st Request"}
+                    </strong>
+                  </div>
+                </div>
+
+                {caseData.appellate_extension_reason && (
+                  <div className="text-xs bg-slate-950/40 p-2.5 rounded-lg border border-cyan-500/15 text-slate-300">
+                    <strong className="text-cyan-200">Good Cause Statement on Record: </strong>
+                    <span className="italic">{caseData.appellate_extension_reason}</span>
+                  </div>
+                )}
+              </div>
+
+              <div className="shrink-0 flex sm:flex-col items-end justify-center gap-2">
+                <Button
+                  size="sm"
+                  onClick={handleGenerateAppellateMotion}
+                  disabled={isGeneratingAppellateMotion}
+                  className="text-xs h-7.5 gap-1.5 bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white shadow-xs"
+                >
+                  <Sparkles className="h-3.5 w-3.5" />
+                  Draft Next Motion to Extend
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => updateCaseMutation.mutate({ appellate_motion_status: "BRIEF_FILED" })}
+                  className="text-xs h-7 gap-1 border-cyan-500/30 text-cyan-300 hover:bg-cyan-950/40"
+                >
+                  <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
+                  Mark Brief Filed
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Interactive Appellate Pleading Viewer Drawer / Modal */}
+      {appellateDraftText && (
+        <Card className="border-cyan-500/40 bg-slate-950 shadow-xl animate-fadeIn">
+          <CardHeader className="pb-3 border-b border-cyan-500/20 flex flex-row items-center justify-between">
+            <div>
+              <CardTitle className="text-sm font-bold text-cyan-200 flex items-center gap-2">
+                <FileText className="h-4 w-4 text-cyan-400" />
+                Pleading Draft: Motion to Extend Time for Filing Appellant's Brief (13th Court of Appeals)
+              </CardTitle>
+              <CardDescription className="text-xs">
+                File-ready Texas appellate motion conforming to Tex. R. App. P. 10.5(b) &amp; 38.6(d).
+              </CardDescription>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={handleCopyAppellateDraft}
+                className="text-xs gap-1.5 border-cyan-500/30 text-cyan-300 hover:bg-cyan-950/60"
+              >
+                {copiedAppellateDraft ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+                {copiedAppellateDraft ? "Copied!" : "Copy Pleading"}
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setAppellateDraftText(null)}
+                className="text-xs text-muted-foreground hover:text-white"
+              >
+                Close
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent className="p-4">
+            <pre className="p-4 rounded-lg bg-slate-900 border border-slate-800 text-cyan-100 font-mono text-xs leading-relaxed overflow-x-auto max-h-96 whitespace-pre-wrap">
+              {appellateDraftText}
+            </pre>
+          </CardContent>
+        </Card>
+      )}
+
 
       {/* Statutory Appointment & Voucher Readiness Banner */}
       {caseData.is_cja && (
@@ -810,59 +1083,144 @@ export function CaseDetail() {
       {activeTab === "timeline" && (
         <Card>
           <CardHeader className="pb-3 border-b border-border">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div>
                 <CardTitle className="text-base flex items-center gap-2">
                   <Clock className="h-5 w-5 text-primary" />
-                  Case Docket & Event Timeline
+                  Case Docket &amp; Event Timeline
                 </CardTitle>
                 <CardDescription>
-                  Chronological record of all docket events generated during this case.
+                  Chronological record of docket milestones, Odyssey Portal history, and statutory deadlines.
                 </CardDescription>
               </div>
-              <Badge variant="info">{timelineEvents?.events?.length || 0} events</Badge>
+
+              <div className="flex items-center gap-2">
+                <Badge variant="info">{timelineEvents?.events?.length || 0} events</Badge>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setIsImportTimelineOpen(true)}
+                  className="h-8 text-xs gap-1.5 border-cyan-500/40 text-cyan-300 hover:bg-cyan-950/40"
+                >
+                  <Sparkles className="h-3.5 w-3.5 text-cyan-400" />
+                  Import Odyssey Summary
+                </Button>
+                <Button
+                  size="sm"
+                  onClick={() => setIsAddEventOpen(true)}
+                  className="h-8 text-xs gap-1.5 bg-primary hover:bg-primary/90 text-primary-foreground"
+                >
+                  <Plus className="h-3.5 w-3.5" />
+                  Add Event
+                </Button>
+              </div>
             </div>
           </CardHeader>
           <CardContent className="p-0">
             {timelineEvents?.events && timelineEvents.events.length > 0 ? (
               <div className="divide-y divide-border/60">
-                {timelineEvents.events.map((ev: any, idx: number) => (
-                  <div key={ev.id ?? idx} className="p-4 flex items-start gap-4 hover:bg-muted/20 transition-colors">
-                    {/* Timeline dot */}
-                    <div className="shrink-0 mt-0.5 flex flex-col items-center gap-1">
-                      <div className="h-2.5 w-2.5 rounded-full bg-primary ring-2 ring-primary/30" />
-                      {idx < (timelineEvents.events.length - 1) && (
-                        <div className="w-px flex-1 min-h-4 bg-border/60" />
-                      )}
-                    </div>
-                    <div className="flex-1 min-w-0 space-y-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-xs font-semibold text-foreground">{ev.title}</span>
-                        {ev.event_type && (
-                          <Badge variant="muted" className="text-[10px] font-mono">
-                            {ev.event_type}
-                          </Badge>
-                        )}
+                {timelineEvents.events.map((ev: any, idx: number) => {
+                  const evType = (ev.event_type || "").toUpperCase()
+                  let badgeVariant: "purple" | "teal" | "warning" | "destructive" | "info" | "muted" = "muted"
+                  let badgeLabel = ev.event_type || "Event"
+
+                  if (evType.includes("COMPETENCY")) {
+                    badgeVariant = "warning"
+                    badgeLabel = "Competency Evaluation"
+                  } else if (evType.includes("PLEA") || evType.includes("SENTENC")) {
+                    badgeVariant = "destructive"
+                    badgeLabel = "Plea & Sentencing"
+                  } else if (evType.includes("ABATEMENT")) {
+                    badgeVariant = "purple"
+                    badgeLabel = "COA Abatement"
+                  } else if (evType.includes("APPEAL")) {
+                    badgeVariant = "teal"
+                    badgeLabel = "13th COA Appeal"
+                  } else if (evType.includes("ARREST") || evType.includes("INDICT")) {
+                    badgeVariant = "info"
+                    badgeLabel = "Arrest & Indictment"
+                  } else if (evType.includes("APPOINT")) {
+                    badgeVariant = "teal"
+                    badgeLabel = "Counsel Appointed"
+                  } else if (evType.includes("DEADLINE")) {
+                    badgeVariant = "warning"
+                    badgeLabel = "Statutory Deadline"
+                  }
+
+                  return (
+                    <div key={ev.id ?? idx} className="p-4 flex items-start justify-between gap-4 hover:bg-muted/20 transition-colors group">
+                      <div className="flex items-start gap-3.5 flex-1 min-w-0">
+                        {/* Timeline dot */}
+                        <div className="shrink-0 mt-1 flex flex-col items-center gap-1">
+                          <div className={`h-2.5 w-2.5 rounded-full ${
+                            badgeVariant === "destructive" ? "bg-red-400 ring-2 ring-red-400/30" :
+                            badgeVariant === "warning" ? "bg-amber-400 ring-2 ring-amber-400/30" :
+                            badgeVariant === "teal" ? "bg-cyan-400 ring-2 ring-cyan-400/30" :
+                            badgeVariant === "purple" ? "bg-purple-400 ring-2 ring-purple-400/30" :
+                            "bg-primary ring-2 ring-primary/30"
+                          }`} />
+                          {idx < (timelineEvents.events.length - 1) && (
+                            <div className="w-px flex-1 min-h-6 bg-border/60" />
+                          )}
+                        </div>
+
+                        <div className="flex-1 min-w-0 space-y-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-xs font-bold text-foreground">{ev.title}</span>
+                            <Badge variant={badgeVariant} className="text-[10px] uppercase font-mono">
+                              {badgeLabel}
+                            </Badge>
+                          </div>
+                          {ev.description && (
+                            <p className="text-xs text-muted-foreground leading-relaxed whitespace-pre-wrap">{ev.description}</p>
+                          )}
+                          <div className="text-[10px] text-muted-foreground/80 font-mono flex items-center gap-2 pt-0.5">
+                            <Calendar className="h-3 w-3 inline text-primary/70" />
+                            <span>
+                              {ev.event_date || ev.created_at
+                                ? formatDate(ev.event_date || ev.created_at)
+                                : "Date unknown"}
+                            </span>
+                          </div>
+                        </div>
                       </div>
-                      {ev.description && (
-                        <p className="text-[11px] text-muted-foreground leading-relaxed">{ev.description}</p>
-                      )}
-                      <div className="text-[10px] text-muted-foreground/70 font-mono">
-                        {ev.event_date || ev.created_at
-                          ? formatDate(ev.event_date || ev.created_at)
-                          : "Date unknown"}
-                      </div>
+
+                      {/* Delete Event Action */}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => {
+                          if (confirm(`Delete event "${ev.title}"?`)) {
+                            deleteEventMutation.mutate(ev.id)
+                          }
+                        }}
+                        className="h-7 w-7 p-0 text-muted-foreground hover:text-rose-400 hover:bg-rose-950/30 opacity-0 group-hover:opacity-100 transition-opacity"
+                        title="Delete event"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
                     </div>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             ) : (
-              <div className="p-10 text-center text-muted-foreground text-xs space-y-2">
+              <div className="p-10 text-center text-muted-foreground text-xs space-y-3">
                 <Clock className="h-8 w-8 mx-auto text-muted-foreground/30" />
-                <p>No docket events recorded yet for this case.</p>
-                <p className="text-[11px] text-muted-foreground/60">
-                  Events are auto-created when documents are ingested or case stages are updated.
+                <p className="font-semibold text-foreground">No docket events recorded yet for this case.</p>
+                <p className="text-[11px] text-muted-foreground/70 max-w-sm mx-auto">
+                  Paste summary text from Odyssey Portal or add docket events manually to populate the timeline.
                 </p>
+                <div className="flex justify-center gap-2 pt-1">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setIsImportTimelineOpen(true)}
+                    className="text-xs border-cyan-500/40 text-cyan-300"
+                  >
+                    <Sparkles className="h-3.5 w-3.5 mr-1" />
+                    Import Odyssey Summary
+                  </Button>
+                </div>
               </div>
             )}
           </CardContent>
@@ -997,6 +1355,330 @@ export function CaseDetail() {
             )}
           </CardContent>
         </Card>
+      )}
+
+      {/* Edit Case Details Modal */}
+      {isEditModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-xs">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-2xl w-full p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Edit className="w-5 h-5 text-cyan-400" />
+                <h3 className="text-base font-bold text-white">Edit Case Record &amp; Provenance</h3>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setIsEditModalOpen(false)}
+                className="h-7 w-7 p-0 text-slate-400 hover:text-white"
+              >
+                ✕
+              </Button>
+            </div>
+
+            <div className="space-y-4 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-slate-400 block mb-1 font-semibold">Primary Case Number</label>
+                  <input
+                    type="text"
+                    value={editCaseForm.case_number || ""}
+                    onChange={(e) => setEditCaseForm({ ...editCaseForm, case_number: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded px-2.5 py-1.5 text-white font-mono"
+                  />
+                </div>
+                <div>
+                  <label className="text-slate-400 block mb-1 font-semibold">Charge Description</label>
+                  <input
+                    type="text"
+                    value={editCaseForm.charge_description || ""}
+                    onChange={(e) => setEditCaseForm({ ...editCaseForm, charge_description: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded px-2.5 py-1.5 text-white"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-slate-400 block mb-1 font-semibold">Court / Appellate Venue</label>
+                  <input
+                    type="text"
+                    value={editCaseForm.court || ""}
+                    onChange={(e) => setEditCaseForm({ ...editCaseForm, court: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded px-2.5 py-1.5 text-white"
+                    placeholder="e.g. 13th Court of Appeals (Corpus Christi - Edinburg)"
+                  />
+                </div>
+                <div>
+                  <label className="text-slate-400 block mb-1 font-semibold">Presiding Judge / Clerk</label>
+                  <input
+                    type="text"
+                    value={editCaseForm.judge || ""}
+                    onChange={(e) => setEditCaseForm({ ...editCaseForm, judge: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded px-2.5 py-1.5 text-white"
+                    placeholder="e.g. Kathy S. Mills, Clerk / Hon. James D. Granberry"
+                  />
+                </div>
+              </div>
+
+              {/* Appellate Linkage Fields */}
+              <div className="bg-slate-950/80 border border-cyan-500/30 rounded-xl p-3.5 space-y-3">
+                <span className="text-cyan-400 font-bold block text-xs uppercase tracking-wider">
+                  Appellate &amp; Trial Court Linking (Texas 13th COA)
+                </span>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  <div>
+                    <label className="text-slate-400 block mb-1">Appellate Cause #</label>
+                    <input
+                      type="text"
+                      value={editCaseForm.appellate_case_number || ""}
+                      onChange={(e) => setEditCaseForm({ ...editCaseForm, appellate_case_number: e.target.value })}
+                      className="w-full bg-slate-900 border border-slate-800 rounded px-2.5 py-1.5 text-white font-mono"
+                      placeholder="e.g. 13-26-00155-CR"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-slate-400 block mb-1">Trial Court Cause #</label>
+                    <input
+                      type="text"
+                      value={editCaseForm.trial_court_case_number || ""}
+                      onChange={(e) => setEditCaseForm({ ...editCaseForm, trial_court_case_number: e.target.value })}
+                      className="w-full bg-slate-900 border border-slate-800 rounded px-2.5 py-1.5 text-white font-mono"
+                      placeholder="e.g. 24FC-2874E"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-slate-400 block mb-1">Brief Due Date</label>
+                    <input
+                      type="date"
+                      value={editCaseForm.appellate_brief_due_date || ""}
+                      onChange={(e) => setEditCaseForm({ ...editCaseForm, appellate_brief_due_date: e.target.value })}
+                      className="w-full bg-slate-900 border border-slate-800 rounded px-2.5 py-1.5 text-white"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-slate-400 block mb-1 font-semibold">Lifecycle Stage</label>
+                  <select
+                    value={editCaseForm.stage || "DISCOVERY"}
+                    onChange={(e) => setEditCaseForm({ ...editCaseForm, stage: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded px-2.5 py-1.5 text-white"
+                  >
+                    <option value="MAGISTRATE_HEARING">Magistrate Hearing</option>
+                    <option value="ARREST">Arrest &amp; Magistration</option>
+                    <option value="BOND">Bail &amp; Conditions</option>
+                    <option value="INDICTMENT">Grand Jury</option>
+                    <option value="DISCOVERY">Morton Discovery</option>
+                    <option value="PRE_TRIAL">Pre-Trial &amp; Suppression</option>
+                    <option value="TRIAL">Plea / Trial</option>
+                    <option value="APPEAL">Appeal (13th Court of Appeals)</option>
+                    <option value="DISPOSED">Disposed / Vouchers</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-slate-400 block mb-1 font-semibold">Case Status</label>
+                  <select
+                    value={editCaseForm.status || "open"}
+                    onChange={(e) => setEditCaseForm({ ...editCaseForm, status: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded px-2.5 py-1.5 text-white"
+                  >
+                    <option value="open">Open</option>
+                    <option value="pending">Pending</option>
+                    <option value="DISPOSED">Disposed</option>
+                    <option value="CLOSED">Closed</option>
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-slate-400 block mb-1 font-semibold">Attorney Notes &amp; History</label>
+                <textarea
+                  rows={3}
+                  value={editCaseForm.notes || ""}
+                  onChange={(e) => setEditCaseForm({ ...editCaseForm, notes: e.target.value })}
+                  className="w-full bg-slate-950 border border-slate-800 rounded p-2.5 text-white text-xs"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 border-t border-slate-800 pt-3">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setIsEditModalOpen(false)}
+                className="text-xs border-slate-700 text-slate-300"
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                onClick={handleSaveEditCase}
+                disabled={updateCaseMutation.isPending}
+                className="text-xs bg-cyan-600 hover:bg-cyan-500 text-white font-semibold"
+              >
+                {updateCaseMutation.isPending ? "Saving..." : "Save Case Details"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Import Odyssey Portal Summary Modal */}
+      {isImportTimelineOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-xs">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-xl w-full p-6 shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-cyan-400" />
+                <h3 className="text-base font-bold text-white">Import Odyssey Portal Summary</h3>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setIsImportTimelineOpen(false)}
+                className="h-7 w-7 p-0 text-slate-400 hover:text-white"
+              >
+                ✕
+              </Button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <p className="text-muted-foreground leading-relaxed">
+                Paste raw case summary paragraphs, docket bullets, or hearing entries from the Tyler Odyssey Portal. Filestavk will parse the dates, milestones, competency hearings, and procedural actions into chronological timeline events.
+              </p>
+
+              <div>
+                <label className="text-slate-300 block mb-1 font-semibold">Odyssey Portal Narrative / Docket Summary Text</label>
+                <textarea
+                  rows={8}
+                  value={importTimelineText}
+                  onChange={(e) => setImportTimelineText(e.target.value)}
+                  placeholder="e.g. July 5, 2024 – October 14, 2024 (Arrest & Indictment): Defendant charged with Aggravated Robbery...&#10;&#10;December 3, 2024 (Incompetency Finding): Court found defendant incompetent..."
+                  className="w-full bg-slate-950 border border-slate-800 rounded-lg p-3 text-white font-mono text-xs leading-relaxed focus:border-cyan-500/50"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 border-t border-slate-800 pt-3">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setIsImportTimelineOpen(false)}
+                className="text-xs border-slate-700 text-slate-300"
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => importTimelineMutation.mutate(importTimelineText)}
+                disabled={importTimelineMutation.isPending || !importTimelineText.trim()}
+                className="text-xs bg-cyan-600 hover:bg-cyan-500 text-white font-semibold gap-1.5"
+              >
+                <Sparkles className="h-3.5 w-3.5" />
+                {importTimelineMutation.isPending ? "Parsing..." : "Parse & Import Timeline"}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add Single Manual Event Modal */}
+      {isAddEventOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4 backdrop-blur-xs">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Plus className="w-5 h-5 text-primary" />
+                <h3 className="text-base font-bold text-white">Add Timeline Event</h3>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setIsAddEventOpen(false)}
+                className="h-7 w-7 p-0 text-slate-400 hover:text-white"
+              >
+                ✕
+              </Button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="text-slate-400 block mb-1 font-semibold">Event Title</label>
+                <input
+                  type="text"
+                  value={newEventForm.title}
+                  onChange={(e) => setNewEventForm({ ...newEventForm, title: e.target.value })}
+                  placeholder="e.g. Competency Hearing Held"
+                  className="w-full bg-slate-950 border border-slate-800 rounded px-2.5 py-1.5 text-white"
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-slate-400 block mb-1 font-semibold">Event Type</label>
+                  <select
+                    value={newEventForm.event_type}
+                    onChange={(e) => setNewEventForm({ ...newEventForm, event_type: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded px-2.5 py-1.5 text-white"
+                  >
+                    <option value="DOCKET_EVENT">Docket Event</option>
+                    <option value="HEARING">Court Hearing</option>
+                    <option value="ORDER">Judicial Order</option>
+                    <option value="MOTION">Motion Filed</option>
+                    <option value="COMPETENCY">Competency</option>
+                    <option value="PLEA_SENTENCING">Plea &amp; Sentencing</option>
+                    <option value="APPEAL">Appeal / Record</option>
+                    <option value="ABATEMENT">COA Abatement</option>
+                    <option value="APPOINTMENT_ORDER">Appointment</option>
+                    <option value="DEADLINE">Deadline</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-slate-400 block mb-1 font-semibold">Event Date</label>
+                  <input
+                    type="date"
+                    value={newEventForm.event_date}
+                    onChange={(e) => setNewEventForm({ ...newEventForm, event_date: e.target.value })}
+                    className="w-full bg-slate-950 border border-slate-800 rounded px-2.5 py-1.5 text-white"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="text-slate-400 block mb-1 font-semibold">Description &amp; Procedural Notes</label>
+                <textarea
+                  rows={4}
+                  value={newEventForm.description}
+                  onChange={(e) => setNewEventForm({ ...newEventForm, description: e.target.value })}
+                  placeholder="Details of the event, appearances, or court findings..."
+                  className="w-full bg-slate-950 border border-slate-800 rounded p-2.5 text-white text-xs"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 border-t border-slate-800 pt-3">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setIsAddEventOpen(false)}
+                className="text-xs border-slate-700 text-slate-300"
+              >
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => addEventMutation.mutate(newEventForm)}
+                disabled={addEventMutation.isPending || !newEventForm.title.trim()}
+                className="text-xs bg-primary hover:bg-primary/90 text-primary-foreground font-semibold"
+              >
+                {addEventMutation.isPending ? "Adding..." : "Add Event"}
+              </Button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

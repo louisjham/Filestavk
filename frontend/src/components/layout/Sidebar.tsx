@@ -20,6 +20,7 @@ import {
 } from "lucide-react"
 import { OctopusIcon } from "@/components/icons/OctopusIcon"
 import { cn } from "@/lib/utils"
+import { usePracticeProfile } from "@/hooks/usePracticeProfile"
 
 const attorneyNavItems = [
   { to: "/",                 icon: LayoutDashboard, label: "Morning Briefing" },
@@ -60,6 +61,8 @@ export function Sidebar() {
     refetchInterval: 15000,
   })
 
+  const { firmName, attorneyName, barNumber, isDemo } = usePracticeProfile()
+
   return (
     <aside className="flex h-screen w-60 flex-col border-r border-sidebar-border bg-sidebar shrink-0">
       {/* Brand Header */}
@@ -68,11 +71,18 @@ export function Sidebar() {
           <OctopusIcon size={20} className="text-cyan-400" />
         </div>
         <div>
-          <span className="text-sm font-bold text-sidebar-foreground tracking-tight block leading-none">
-            Hemocyanin Law
-          </span>
+          <div className="flex items-center gap-1.5">
+            <span className="text-sm font-bold text-sidebar-foreground tracking-tight block leading-none">
+              {firmName}
+            </span>
+            {isDemo && (
+              <span className="text-[9px] px-1 py-0.5 rounded bg-cyan-500/20 text-cyan-300 font-bold border border-cyan-500/40 leading-none">
+                DEMO
+              </span>
+            )}
+          </div>
           <span className="text-[10px] text-cyan-400/90 font-medium">
-            {isAssistant ? "Assistant Workspace" : "Filestavk &bull; Corpus Christi"}
+            {isAssistant ? "Assistant Workspace" : (isDemo ? "Filestavk • Coastal Operations" : "Filestavk • Corpus Christi")}
           </span>
         </div>
       </div>
@@ -112,8 +122,8 @@ export function Sidebar() {
         {!isAssistant ? (
           <>
             <div className="flex items-center justify-between text-[11px]">
-              <span className="font-semibold text-sidebar-foreground/90">Kimbel Brandon, Esq.</span>
-              <span className="text-[10px] text-cyan-400/80">#24098742</span>
+              <span className="font-semibold text-sidebar-foreground/90">{attorneyName}</span>
+              <span className="text-[10px] text-cyan-400/80">#{barNumber}</span>
             </div>
             <div className="text-[10px] text-sidebar-foreground/50">Nueces County &bull; Texas State Bar</div>
           </>
@@ -132,3 +142,4 @@ export function Sidebar() {
     </aside>
   )
 }
+

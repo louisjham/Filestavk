@@ -36,6 +36,7 @@ import {
 import { formatDate } from "@/lib/utils"
 import { ClassificationBadge } from "@/components/shared/ClassificationBadge"
 import { DocumentDropzone } from "@/components/documents/DocumentDropzone"
+import { HumanReviewCorrectionModal } from "@/components/documents/HumanReviewCorrectionModal"
 
 export function Documents() {
   const queryClient = useQueryClient()
@@ -43,6 +44,7 @@ export function Documents() {
   const [searchTerm, setSearchTerm] = useState("")
   const [selectedLabel, setSelectedLabel] = useState<string>("ALL")
   const [selectedDocType, setSelectedDocType] = useState<string>("ALL")
+  const [reviewModalDoc, setReviewModalDoc] = useState<any | null>(null)
   const [inspectDoc, setInspectDoc] = useState<any | null>(null)
   const [isUploading, setIsUploading] = useState(false)
   const [bindCaseId, setBindCaseId] = useState<string>("")
@@ -852,15 +854,26 @@ export function Documents() {
                             </span>
                           </div>
                         </div>
-                        <Button
-                          size="sm"
-                          onClick={() => approveReviewMutation.mutate(inspectDoc.id)}
-                          disabled={approveReviewMutation.isPending}
-                          className="w-full bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs cursor-pointer shadow-md gap-1.5"
-                        >
-                          <CheckCircle2 className="w-3.5 h-3.5" />
-                          {approveReviewMutation.isPending ? "Approving & Resuming Pipeline..." : "Approve Stamp & Signature (Resume Workflow)"}
-                        </Button>
+                        <div className="flex flex-col sm:flex-row gap-2">
+                          <Button
+                            size="sm"
+                            onClick={() => setReviewModalDoc(inspectDoc)}
+                            className="flex-1 bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs cursor-pointer shadow-md gap-1.5"
+                          >
+                            <Sparkles className="w-3.5 h-3.5" />
+                            Identify Data &amp; Teach Sub-Rule
+                          </Button>
+                          <Button
+                            size="sm"
+                            onClick={() => approveReviewMutation.mutate(inspectDoc.id)}
+                            disabled={approveReviewMutation.isPending}
+                            variant="outline"
+                            className="border-amber-500/40 text-amber-300 hover:bg-amber-500/10 font-bold text-xs cursor-pointer shadow-md gap-1.5"
+                          >
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            {approveReviewMutation.isPending ? "Approving..." : "Quick Approve"}
+                          </Button>
+                        </div>
                       </div>
                     )}
 
@@ -987,6 +1000,22 @@ export function Documents() {
         </div>
       )
     })()}
+      {/* Human Review & Sub-Rule Learning Modal */}
+      {reviewModalDoc && (
+        <HumanReviewCorrectionModal
+          documentItem={reviewModalDoc}
+          isOpen={!!reviewModalDoc}
+          onClose={() => setReviewModalDoc(null)}
+          onSuccess={() => {
+            queryClient.invalidateQueries({ queryKey: ["documents"] })
+            queryClient.invalidateQueries({ queryKey: ["cases"] })
+            queryClient.invalidateQueries({ queryKey: ["dashboard-morning-alerts"] })
+            if (inspectDoc && inspectDoc.id === reviewModalDoc.id) {
+              setInspectDoc(null)
+            }
+          }}
+        />
+      )}
     </div>
   )
 }

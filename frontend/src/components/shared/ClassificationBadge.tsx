@@ -3,6 +3,8 @@ import { Badge } from "@/components/ui/badge"
 const LABEL_MAP: Record<string, { label: string; variant: "destructive" | "info" | "purple" | "success" | "sky" | "orange" | "warning" | "teal" | "muted" }> = {
   court_order:      { label: "Court Order",      variant: "destructive" },
   pleading:         { label: "Pleading",          variant: "info" },
+  appellate_motion_extension: { label: "Appellate Extension Motion", variant: "info" },
+  appellate_order_granting_extension: { label: "Appellate Extension Granted", variant: "success" },
   discovery:        { label: "Discovery",         variant: "purple" },
   correspondence:   { label: "Correspondence",    variant: "success" },
   email:            { label: "Email",             variant: "sky" },
@@ -11,6 +13,7 @@ const LABEL_MAP: Record<string, { label: string; variant: "destructive" | "info"
   voucher_support:  { label: "Voucher Support",   variant: "teal" },
   uncategorized:    { label: "Uncategorized",     variant: "muted" },
 }
+
 
 interface ClassificationBadgeProps {
   label: string | null | undefined

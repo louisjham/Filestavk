@@ -33,6 +33,25 @@ ATTORNEY_PROFILE = {
     "statutory_jurisdiction": "Nueces County, Texas (Art. 26.05 CCP)",
 }
 
+DEMO_PROFILE = {
+    "name": "Kimbel B.",
+    "title": "Attorney at Law",
+    "firm_name": "Coastal Operations & Practice",
+    "website": "https://www.coastalpractice.example",
+    "intake_email": "records@coastalpractice.example",
+    "business_email": "kimbel@coastalpractice.example",
+    "bar_number": "24000000",
+    "vendor_number": "TX-NUE-10000",
+    "address": "100 N. Shoreline Blvd, Suite 200, Corpus Christi, TX 78401",
+    "phone": "(361) 555-0100",
+    "digital_signature_name": "Kimbel B., Esq.",
+    "digital_signature_hash": "SHA256-DEMO-2026",
+    "digital_signature_status": "VERIFIED_DEMO",
+    "hourly_rate_standard": 100.0,
+    "statutory_jurisdiction": "Nueces County, Texas (Art. 26.05 CCP)",
+    "is_demo": True,
+}
+
 
 class AttorneyProfileUpdate(BaseModel):
     name: Optional[str] = None
@@ -49,7 +68,11 @@ class AttorneyProfileUpdate(BaseModel):
 @router.get("/profile")
 async def get_attorney_profile(current_user: dict = Depends(get_current_user)):
     """Retrieve attorney profile and statutory voucher credentials."""
-    return ATTORNEY_PROFILE
+    from app.config import settings
+    if settings.demo_mode:
+        return DEMO_PROFILE
+    return {**ATTORNEY_PROFILE, "is_demo": False}
+
 
 
 @router.patch("/profile")
@@ -265,6 +288,95 @@ async def get_dashboard_morning_alerts(
             "action_label": "Go to Vouchers",
             "link": "/vouchers",
         })
+
+    # 7. Appellate Brief Extension & Due Date Deadline Clocks (Tex. R. App. P. 38.6)
+    appellate_cases_res = await db.execute(
+        select(Case, Client)
+        .outerjoin(Client, Case.client_id == Client.id)
+        .where(
+            (Case.appellate_brief_due_date.isnot(None))
+            | (Case.stage == "APPEAL")
+        )
+    )
+    for c, cl in appellate_cases_res.all():
+        if c.appellate_brief_due_date and c.status != "CLOSED":
+            try:
+                due_dt = datetime.strptime(c.appellate_brief_due_date[:10], "%Y-%m-%d").date()
+                days_left = (due_dt - now).days
+            except Exception:
+                continue
+
+            cl_name = cl.name if cl else "Appellant"
+            c_num = c.appellate_case_number or c.case_number or f"Case #{c.id}"
+            ext_count = c.appellate_extension_count or 1
+            seq_str = "First" if ext_count == 1 else "Second" if ext_count == 2 else f"{ext_count}th"
+
+            if c.appellate_motion_status == "MOTION_PENDING":
+                alerts.append({
+                    "id": f"appellate-pending-{c.id}",
+                    "type": "APPELLATE_MOTION_ACTION_REQUIRED",
+                    "severity": "HIGH",
+                    "title": f"Action Required: File & Serve {seq_str} Extension Motion: {cl_name} — #{c_num}",
+                    "description": (
+                        f"{seq_str} Motion to Extend Time for Filing Appellant's Brief is drafted. "
+                        f"Reminder: E-file and serve electronically on counsel for the State of Texas by the Certificate of Service date."
+                    ),
+                    "target_id": c.id,
+                    "case_id": c.id,
+                    "action_label": "Review & E-File",
+                    "link": f"/cases/{c.id}",
+                })
+            elif days_left < 0:
+                # Overdue brief
+                alerts.append({
+                    "id": f"appellate-overdue-{c.id}",
+                    "type": "APPELLATE_BRIEF_OVERDUE",
+                    "severity": "CRITICAL",
+                    "title": f"Appellate Brief Overdue ({abs(days_left)} Days Late): {cl_name} — #{c_num}",
+                    "description": (
+                        f"Appellant's Brief was due on {c.appellate_brief_due_date} in the 13th Court of Appeals. "
+                        f"Court will issue TRAP 38.8(b) notice or dismiss appeal. "
+                        f"Suggested Course of Action: Immediately file Motion for Out-of-Time Extension citing good cause or file Appellant's Brief."
+                    ),
+                    "target_id": c.id,
+                    "case_id": c.id,
+                    "action_label": "Draft Extension Motion",
+                    "link": f"/cases/{c.id}",
+                })
+            elif days_left <= 7:
+                # Urgent deadline within 7 days
+                next_seq = "Second" if ext_count == 1 else "Third" if ext_count == 2 else f"{ext_count + 1}th"
+                alerts.append({
+                    "id": f"appellate-urgent-{c.id}",
+                    "type": "APPELLATE_BRIEF_URGENT",
+                    "severity": "HIGH",
+                    "title": f"Appellate Brief Due in {days_left} Day{'s' if days_left != 1 else ''}: {cl_name} — #{c_num}",
+                    "description": (
+                        f"Appellant's Brief due on {c.appellate_brief_due_date} ({seq_str} Extension on record). "
+                        f"Suggested Course of Action: Finalize Brief for e-filing or file {next_seq} Motion to Extend Time for Filing Appellant's Brief (30 days)."
+                    ),
+                    "target_id": c.id,
+                    "case_id": c.id,
+                    "action_label": "Draft Next Extension",
+                    "link": f"/cases/{c.id}",
+                })
+            elif days_left <= 14:
+                # Approaching deadline within 14 days
+                alerts.append({
+                    "id": f"appellate-warning-{c.id}",
+                    "type": "APPELLATE_BRIEF_APPROACHING",
+                    "severity": "WARNING",
+                    "title": f"Appellate Brief Due in {days_left} Days: {cl_name} — #{c_num}",
+                    "description": (
+                        f"Appellant's Brief due on {c.appellate_brief_due_date} in 13th Court of Appeals. "
+                        f"Suggested Course of Action: Review record, prepare draft, or confer with State for agreed extension."
+                    ),
+                    "target_id": c.id,
+                    "case_id": c.id,
+                    "action_label": "View Case",
+                    "link": f"/cases/{c.id}",
+                })
+
 
     # Sort alerts by severity (CRITICAL first, then HIGH, then WARNING, then MEDIUM)
     severity_order = {"CRITICAL": 0, "HIGH": 1, "WARNING": 2, "MEDIUM": 3}

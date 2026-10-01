@@ -26,6 +26,13 @@ class CaseBase(BaseModel):
     acceptance_filed_date: Optional[str] = None
     client_contact_date: Optional[str] = None
     appointment_status: Optional[str] = "UNKNOWN"
+    appellate_case_number: Optional[str] = None
+    trial_court_case_number: Optional[str] = None
+    appellate_court: Optional[str] = None
+    appellate_brief_due_date: Optional[str] = None
+    appellate_extension_count: Optional[int] = 0
+    appellate_extension_reason: Optional[str] = None
+    appellate_motion_status: Optional[str] = None
     disposition_type: Optional[str] = None
     disposition_date: Optional[str] = None
     source_spreadsheet_row_id: Optional[str] = None
@@ -60,6 +67,13 @@ class CaseUpdate(BaseModel):
     acceptance_filed_date: Optional[str] = None
     client_contact_date: Optional[str] = None
     appointment_status: Optional[str] = None
+    appellate_case_number: Optional[str] = None
+    trial_court_case_number: Optional[str] = None
+    appellate_court: Optional[str] = None
+    appellate_brief_due_date: Optional[str] = None
+    appellate_extension_count: Optional[int] = None
+    appellate_extension_reason: Optional[str] = None
+    appellate_motion_status: Optional[str] = None
     disposition_type: Optional[str] = None
     disposition_date: Optional[str] = None
     source_spreadsheet_row_id: Optional[str] = None
@@ -73,3 +87,4 @@ class CaseOut(CaseBase):
     created_at: Optional[datetime] = None
     class Config:
         from_attributes = True
+

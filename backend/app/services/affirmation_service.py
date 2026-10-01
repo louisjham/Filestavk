@@ -188,10 +188,13 @@ class AffirmationService:
         else:
             time_greeting = "Good evening"
 
+        from app.config import settings
+        subtitle = "Coastal Practice Command & Intelligence" if settings.demo_mode else "Hemocyanin Law Command & Practice Intelligence"
+
         return {
             "date": target_date,
             "greeting": f"{time_greeting}, Kimbel",
-            "subtitle": "Hemocyanin Law Command & Practice Intelligence",
+            "subtitle": subtitle,
             "affirmation": selected,
             "total_affirmations": len(self._affirmations),
         }
@@ -199,13 +202,16 @@ class AffirmationService:
     def get_random_affirmation(self) -> Dict[str, Any]:
         """Returns an on-demand fresh affirmation when Kimbel clicks 'Shuffle' / 'Another Tentacle'."""
         selected = random.choice(self._affirmations)
+        from app.config import settings
+        subtitle = "Coastal Resilience On-Demand" if settings.demo_mode else "Hemocyanin Resilience On-Demand"
         return {
             "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
             "greeting": "A fresh tentacle of wisdom, Kimbel",
-            "subtitle": "Hemocyanin Resilience On-Demand",
+            "subtitle": subtitle,
             "affirmation": selected,
             "total_affirmations": len(self._affirmations),
         }
+
 
 
 # Singleton service instance

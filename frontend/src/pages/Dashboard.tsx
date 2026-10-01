@@ -1,3 +1,4 @@
+import { useState } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import { Link } from "react-router-dom"
 import { api } from "@/lib/api"
@@ -19,17 +20,24 @@ import {
   Lock,
   Calendar,
   ExternalLink,
+  Sparkles,
 } from "lucide-react"
 import { OctopusIcon } from "@/components/icons/OctopusIcon"
 import { useAuth } from "@/lib/auth"
 import { KimbelDelegationCard } from "@/components/delegation/KimbelDelegationCard"
 import { KimbelDailyGreeting } from "@/components/KimbelDailyGreeting"
+import { GeminiBriefingIngestModal } from "@/components/briefing/GeminiBriefingIngestModal"
+import { GeminiBriefingVerificationBoard } from "@/components/briefing/GeminiBriefingVerificationBoard"
 import { formatDate } from "@/lib/utils"
+import { usePracticeProfile } from "@/hooks/usePracticeProfile"
 
 export function Dashboard() {
   const queryClient = useQueryClient()
   const { user } = useAuth()
+  const { isDemo, attorneyName, barNumber } = usePracticeProfile()
+
   const isAssistant = user?.role === "assistant"
+  const [isIngestModalOpen, setIsIngestModalOpen] = useState(false)
 
   // Unified Morning Briefing & Alerts
   const { data: briefing, isLoading: briefingLoading } = useQuery({
@@ -64,10 +72,20 @@ export function Dashboard() {
       {/* Quick Action Toolbar */}
       <div className="flex items-center justify-between gap-3 px-1 -mt-2">
         <p className="text-xs text-muted-foreground font-medium">
-          {briefing?.date_today || "Nueces County Defense Command"} &bull; {isAssistant ? "Assistant Workspace" : "Kimbel Brandon, State Bar #24079543"}
+          {briefing?.date_today || "Nueces County Defense Command"} &bull; {isAssistant ? "Assistant Workspace" : `${attorneyName}, State Bar #${barNumber}`}
         </p>
 
+
         <div className="flex items-center gap-2.5">
+          <Button
+            size="sm"
+            onClick={() => setIsIngestModalOpen(true)}
+            className="text-xs gap-1.5 bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white font-medium shadow-xs"
+          >
+            <Sparkles className="h-3.5 w-3.5" />
+            Paste 10-Day Gem Brief
+          </Button>
+
           {!isAssistant && (
             <Button
               size="sm"
@@ -77,7 +95,7 @@ export function Dashboard() {
               className="text-xs gap-1.5 border-cyan-500/30 text-cyan-300 hover:bg-cyan-950/40"
             >
               <RefreshCw className={`h-3.5 w-3.5 ${syncMutation.isPending ? "animate-spin text-cyan-400" : ""}`} />
-              Sync Gmail (info@hemocyaninlaw.com)
+              Sync Gmail
             </Button>
           )}
           <Button asChild size="sm" className="text-xs gap-1.5 bg-cyan-600 hover:bg-cyan-500 text-white font-medium">
@@ -88,6 +106,12 @@ export function Dashboard() {
           </Button>
         </div>
       </div>
+
+      {/* 2. Gemini 10-Day Deep-Dive Verification Board */}
+      <GeminiBriefingVerificationBoard onOpenIngestModal={() => setIsIngestModalOpen(true)} />
+
+      {/* Modal for pasting Gemini Brief */}
+      <GeminiBriefingIngestModal open={isIngestModalOpen} onOpenChange={setIsIngestModalOpen} />
 
       {/* 2. Kimbel's Delegated Tasks (Always on top for assistant, visible for attorney) */}
       <KimbelDelegationCard />

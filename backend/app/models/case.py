@@ -30,6 +30,15 @@ class Case(Base):
     client_contact_date = Column(String)  # e.g. "2026-09-01"
     appointment_status = Column(String, default="UNKNOWN")  # CONFIRMED_AND_ACCEPTED, AWAITING_ACCEPTANCE, MISSING_ORDER, RETAINED, UNKNOWN
 
+    # Appellate Case Tracking & Brief Extension Clocks (Tex. R. App. P. 10.5 & 38.6)
+    appellate_case_number = Column(String, index=True)  # e.g. "13-26-00155-CR"
+    trial_court_case_number = Column(String, index=True)  # e.g. "24FC-2874E"
+    appellate_court = Column(String)  # e.g. "Court of Appeals 13th Supreme Judicial District of Texas"
+    appellate_brief_due_date = Column(String)  # ISO Date e.g. "2026-09-14"
+    appellate_extension_count = Column(Integer, default=0)  # 1 for first, 2 for second
+    appellate_extension_reason = Column(Text)  # e.g. "unexpected loss of administrative assistant on extended FMLA leave"
+    appellate_motion_status = Column(String)  # MOTION_FILED, EXTENSION_GRANTED, BRIEF_DUE, BRIEF_FILED
+
     disposition_type = Column(String)  # DISMISSED, PLEA_GUILTY, TRIAL_VERDICT, DEFERRED, PENDING
     disposition_date = Column(String)  # e.g. "2024-08-20"
     source_spreadsheet_row_id = Column(String)  # If imported from master spreadsheet
@@ -38,3 +47,4 @@ class Case(Base):
     notes = Column(Text)
     created_at = Column(DateTime, default=func.now())
     client = relationship("Client", back_populates="cases")
+

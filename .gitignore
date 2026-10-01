@@ -66,6 +66,7 @@ frontend/.eslintcache
 backend/data/documents/
 backend/data/raw_emails/
 backend/data/filestavk.db*
+backend/data/latest_gemini_brief.json
 
 # Local Poppler Binaries & Archives
 Release-26.07.0-0/

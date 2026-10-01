@@ -5,8 +5,10 @@ import { LogOut, Sparkles, User, Lock, ArrowLeftRight, Check } from "lucide-reac
 import { Button } from "@/components/ui/button"
 import { OctopusIcon } from "@/components/icons/OctopusIcon"
 import { PracticeOverviewModal } from "@/components/story/PracticeOverviewModal"
+import { usePracticeProfile } from "@/hooks/usePracticeProfile"
 
 const routeTitles: Record<string, string> = {
+
   "/": "Practice Morning Briefing",
   "/clients": "Clients",
   "/cases": "Case Management & Dockets",
@@ -28,6 +30,7 @@ export function Topbar() {
   const [switching, setSwitching] = useState(false)
 
   const isAssistant = user?.role === "assistant"
+  const { firmName, attorneyName } = usePracticeProfile()
 
   let title = "Filestavk"
   for (const [path, label] of Object.entries(routeTitles)) {
@@ -99,14 +102,15 @@ export function Topbar() {
               </div>
               <div className="flex flex-col text-left leading-tight">
                 <span className="text-xs font-semibold text-foreground group-hover:text-primary transition-colors">
-                  Kimbel Brandon, Esq.
+                  {attorneyName}
                 </span>
                 <span className="text-[9px] text-cyan-400/90 font-medium">
-                  Hemocyanin Law
+                  {firmName}
                 </span>
               </div>
             </Link>
           ) : (
+
             <div className="flex items-center gap-2 px-3 py-1 rounded-full bg-amber-500/10 border border-amber-500/30">
               <div className="h-6 w-6 rounded-full bg-amber-500/20 flex items-center justify-center text-amber-300 font-bold text-xs">
                 A

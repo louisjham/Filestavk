@@ -30,9 +30,12 @@ import {
   ExternalLink,
 } from "lucide-react"
 import { formatDate } from "@/lib/utils"
+import { usePracticeProfile } from "@/hooks/usePracticeProfile"
 
 export function Vouchers() {
   const queryClient = useQueryClient()
+  const { firmName, attorneyName, barNumber, email, profile, isDemo } = usePracticeProfile()
+
   const [selectedStatus, setSelectedStatus] = useState<string>("ALL")
   const [selectedMethod, setSelectedMethod] = useState<string>("ALL")
   const [searchTerm, setSearchTerm] = useState<string>("")
@@ -175,8 +178,9 @@ export function Vouchers() {
             className="gap-1.5 border-primary/30 hover:bg-primary/10 text-primary text-xs"
           >
             <RefreshCw className={`h-4 w-4 ${syncMutation.isPending ? "animate-spin" : ""}`} />
-            Sync Email Notices (info@hemocyaninlaw.com)
+            Sync Email Notices ({email})
           </Button>
+
         </div>
       </div>
 
@@ -763,20 +767,21 @@ export function Vouchers() {
             <div className="p-3 bg-secondary/40 border border-border rounded-lg flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="space-y-0.5">
                 <span className="font-semibold text-foreground flex items-center gap-1.5">
-                  <span className="text-cyan-400 font-bold">Hemocyanin Law</span> &bull; Kimbel Brandon, Esq.
+                  <span className="text-cyan-400 font-bold">{firmName}</span> &bull; {attorneyName}
                 </span>
                 <div className="text-muted-foreground text-[11px] flex items-center gap-3">
-                  <span>Vendor ID: <code className="text-foreground">TX-NUE-84920</code></span>
-                  <span>State Bar: <code className="text-foreground">#24098742</code></span>
+                  <span>Vendor ID: <code className="text-foreground">{profile?.vendor_number || (isDemo ? "TX-NUE-10000" : "TX-NUE-84920")}</code></span>
+                  <span>State Bar: <code className="text-foreground">#{barNumber}</code></span>
                   <span>Jurisdiction: Nueces County, TX</span>
                 </div>
               </div>
               <div className="text-right shrink-0">
                 <Badge variant="outline" className="text-[10px] text-cyan-300 border-cyan-500/40 bg-cyan-950/30">
-                  /s/ Kimbel Brandon, Esq. [E-Signed]
+                  /s/ {attorneyName} [E-Signed]
                 </Badge>
               </div>
             </div>
+
 
             {inspectVoucher.rejection_reason && (
               <div className="p-3 bg-red-500/10 border border-red-500/30 text-red-300 rounded-lg">
@@ -815,9 +820,10 @@ export function Vouchers() {
                 size="sm"
                 className="bg-primary hover:bg-primary/90"
                 onClick={() => {
-                  alert("Voucher exported to standard Nueces County Indigent Defense (Art. 26.05) PDF format with Kimbel Brandon's verified signature and Vendor ID TX-NUE-84920!")
+                  alert(`Voucher exported to standard Nueces County Indigent Defense (Art. 26.05) PDF format with ${attorneyName}'s verified signature and Vendor ID ${profile?.vendor_number || (isDemo ? "TX-NUE-10000" : "TX-NUE-84920")}!`)
                 }}
               >
+
                 <FileText className="h-3.5 w-3.5 mr-1.5" />
                 Export Nueces Voucher PDF
               </Button>
